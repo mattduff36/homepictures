@@ -44,6 +44,24 @@ function Write-Info {
     Write-Host $Message
 }
 
+function Get-StrictProperty {
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
 if (-not (Test-IsAdministrator)) {
     throw "This restore script must be run from an elevated PowerShell window."
 }
@@ -59,23 +77,30 @@ This script will not change Tailscale policies without that record.
 
 $record = Get-Content -LiteralPath $RecordPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
-if ($record.appliedBy -ne 'HomePictures') {
+$appliedBy = Get-StrictProperty -Object $record -Name 'appliedBy'
+$purpose = Get-StrictProperty -Object $record -Name 'purpose'
+$schemaVersion = Get-StrictProperty -Object $record -Name 'schemaVersion'
+$policyKey = Get-StrictProperty -Object $record -Name 'policyKey'
+$policies = Get-StrictProperty -Object $record -Name 'policies'
+$createdPolicyKey = Get-StrictProperty -Object $record -Name 'createdPolicyKey'
+
+if ($appliedBy -ne 'HomePictures') {
     throw "The install record was not created by HomePictures. No policies were changed."
 }
 
-if ($record.purpose -ne 'camera-viewing-client') {
+if ($purpose -ne 'camera-viewing-client') {
     throw "The install record is not a HomePictures camera-viewing record. No policies were changed."
 }
 
-if ([int]$record.schemaVersion -ne 1) {
+if ($null -eq $schemaVersion -or [int]$schemaVersion -ne 1) {
     throw "The install record uses an unsupported schema. No policies were changed."
 }
 
-if ($record.policyKey -ne 'HKLM\SOFTWARE\Policies\Tailscale') {
+if ($policyKey -ne 'HKLM\SOFTWARE\Policies\Tailscale') {
     throw "The install record points at an unexpected policy key. No policies were changed."
 }
 
-if (-not $record.policies) {
+if (-not $policies) {
     throw "The install record does not list any policies. No policies were changed."
 }
 
@@ -83,9 +108,9 @@ $removed = New-Object System.Collections.Generic.List[string]
 $leftAlone = New-Object System.Collections.Generic.List[string]
 
 if (Test-Path -LiteralPath $PolicyKeyPath) {
-    foreach ($policy in $record.policies) {
-        $name = [string]$policy.name
-        $expected = [string]$policy.value
+    foreach ($policy in @($policies)) {
+        $name = [string](Get-StrictProperty -Object $policy -Name 'name')
+        $expected = [string](Get-StrictProperty -Object $policy -Name 'value')
 
         if (-not $AllowedCameraPolicies.ContainsKey($name)) {
             $leftAlone.Add("$name (not a HomePictures camera policy)")
@@ -114,7 +139,7 @@ if (Test-Path -LiteralPath $PolicyKeyPath) {
     }
 
     $remaining = (Get-Item -LiteralPath $PolicyKeyPath).GetValueNames()
-    if ($remaining.Count -eq 0 -and $record.createdPolicyKey -eq $true) {
+    if ($remaining.Count -eq 0 -and $createdPolicyKey -eq $true) {
         Remove-Item -LiteralPath $PolicyKeyPath
         Write-Info "Removed the empty HomePictures-created policy key."
     }

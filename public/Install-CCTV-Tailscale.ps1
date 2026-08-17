@@ -66,7 +66,8 @@ function Write-WarnLine {
 }
 
 function Wait-ForReader {
-    if ($Host.Name -eq 'ConsoleHost') {
+    $hostName = Get-StrictProperty -Object $Host -Name 'Name'
+    if ($hostName -eq 'ConsoleHost') {
         Write-Host ""
         Write-Host "Press Enter to close this window."
         try {
@@ -83,6 +84,40 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-StrictProperty {
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
+function Test-IsTailscaleUninstallDisplayName {
+    param($App)
+
+    if ($null -eq $App) {
+        return $false
+    }
+
+    $displayNameProperty = $App.PSObject.Properties['DisplayName']
+    if ($null -eq $displayNameProperty) {
+        return $false
+    }
+
+    $displayName = [string]$displayNameProperty.Value
+    return ($displayName -eq 'Tailscale' -or $displayName -like 'Tailscale *')
+}
+
 function Get-NativeProcessorArchitecture {
     if ($env:PROCESSOR_ARCHITEW6432) {
         return $env:PROCESSOR_ARCHITEW6432
@@ -92,18 +127,28 @@ function Get-NativeProcessorArchitecture {
 
 function Test-SupportedWindows {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
-    $build = [int]$os.BuildNumber
-    $version = [version]$os.Version
+    $buildValue = Get-StrictProperty -Object $os -Name 'BuildNumber'
+    $versionValue = Get-StrictProperty -Object $os -Name 'Version'
+    $productType = Get-StrictProperty -Object $os -Name 'ProductType'
+    $caption = Get-StrictProperty -Object $os -Name 'Caption'
 
-    if ($os.ProductType -ne 1) {
+    if ($null -eq $buildValue -or $null -eq $versionValue -or $null -eq $productType) {
+        throw "Windows environment check failed because required operating-system properties were missing."
+    }
+
+    $build = [int]$buildValue
+    $version = [version]$versionValue
+    $captionText = if ($null -ne $caption) { [string]$caption } else { 'Windows' }
+
+    if ([int]$productType -ne 1) {
         throw "This installer is for Windows 10 or Windows 11 PCs. Server editions are not supported."
     }
 
     if ($version.Major -lt 10 -or $build -lt 10240) {
-        throw "Windows 10 or Windows 11 is required. Detected $($os.Caption) (build $build)."
+        throw "Windows 10 or Windows 11 is required. Detected $captionText (build $build)."
     }
 
-    Write-Info "Windows check passed: $($os.Caption) (build $build)."
+    Write-Info "Windows check passed: $captionText (build $build)."
 }
 
 function Test-TailscaleAlreadyInstalled {
@@ -124,11 +169,13 @@ function Test-TailscaleAlreadyInstalled {
         }
     }
 
-    $services = Get-Service -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -match 'tailscale' -or $_.DisplayName -match 'tailscale'
-    }
-    if ($services) {
-        return $true
+    $services = @(Get-Service -ErrorAction SilentlyContinue)
+    foreach ($service in $services) {
+        $serviceName = [string](Get-StrictProperty -Object $service -Name 'Name')
+        $serviceDisplayName = [string](Get-StrictProperty -Object $service -Name 'DisplayName')
+        if ($serviceName -match 'tailscale' -or $serviceDisplayName -match 'tailscale') {
+            return $true
+        }
     }
 
     $processes = Get-Process -Name 'tailscale','tailscale-ipn' -ErrorAction SilentlyContinue
@@ -141,11 +188,11 @@ function Test-TailscaleAlreadyInstalled {
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
     foreach ($root in $uninstallRoots) {
-        $apps = Get-ItemProperty -Path $root -ErrorAction SilentlyContinue | Where-Object {
-            $_.DisplayName -and ($_.DisplayName -eq 'Tailscale' -or $_.DisplayName -like 'Tailscale *')
-        }
-        if ($apps) {
-            return $true
+        $apps = @(Get-ItemProperty -Path $root -ErrorAction SilentlyContinue)
+        foreach ($app in $apps) {
+            if (Test-IsTailscaleUninstallDisplayName $app) {
+                return $true
+            }
         }
     }
 
@@ -211,7 +258,11 @@ function Test-NotReparsePoint {
     }
 
     $item = Get-Item -LiteralPath $Path -Force
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+    $attributes = Get-StrictProperty -Object $item -Name 'Attributes'
+    if ($null -eq $attributes) {
+        throw "Could not read filesystem attributes for $Path."
+    }
+    if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
         throw "Refusing to use a reparse point at $Path."
     }
 }
@@ -311,7 +362,12 @@ function Show-ManagedPolicyMessage {
 }
 
 function Restart-Elevated {
-    $hostPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $currentProcess = [System.Diagnostics.Process]::GetCurrentProcess()
+    $mainModule = Get-StrictProperty -Object $currentProcess -Name 'MainModule'
+    $hostPath = Get-StrictProperty -Object $mainModule -Name 'FileName'
+    if (-not $hostPath) {
+        throw "Cannot determine the PowerShell host path, so the installer cannot request administrator permission."
+    }
     if (-not $PSCommandPath) {
         throw "Cannot determine the script path, so the installer cannot request administrator permission."
     }
@@ -463,7 +519,10 @@ function Assert-TailscaleAuthenticode {
         throw "Authenticode signature has no signer certificate. Installation stopped."
     }
 
-    $subject = $signature.SignerCertificate.Subject
+    $subject = Get-StrictProperty -Object $signature.SignerCertificate -Name 'Subject'
+    if ($null -eq $subject) {
+        throw "Authenticode signer subject could not be read. Installation stopped."
+    }
     $commonName = $null
     if ($subject -match 'CN=([^,]+)') {
         $commonName = $Matches[1].Trim()
@@ -558,6 +617,24 @@ function Write-Info {
     Write-Host $Message
 }
 
+function Get-StrictProperty {
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
 if (-not (Test-IsAdministrator)) {
     throw "This restore script must be run from an elevated PowerShell window."
 }
@@ -573,23 +650,30 @@ This script will not change Tailscale policies without that record.
 
 $record = Get-Content -LiteralPath $RecordPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
-if ($record.appliedBy -ne 'HomePictures') {
+$appliedBy = Get-StrictProperty -Object $record -Name 'appliedBy'
+$purpose = Get-StrictProperty -Object $record -Name 'purpose'
+$schemaVersion = Get-StrictProperty -Object $record -Name 'schemaVersion'
+$policyKey = Get-StrictProperty -Object $record -Name 'policyKey'
+$policies = Get-StrictProperty -Object $record -Name 'policies'
+$createdPolicyKey = Get-StrictProperty -Object $record -Name 'createdPolicyKey'
+
+if ($appliedBy -ne 'HomePictures') {
     throw "The install record was not created by HomePictures. No policies were changed."
 }
 
-if ($record.purpose -ne 'camera-viewing-client') {
+if ($purpose -ne 'camera-viewing-client') {
     throw "The install record is not a HomePictures camera-viewing record. No policies were changed."
 }
 
-if ([int]$record.schemaVersion -ne 1) {
+if ($null -eq $schemaVersion -or [int]$schemaVersion -ne 1) {
     throw "The install record uses an unsupported schema. No policies were changed."
 }
 
-if ($record.policyKey -ne 'HKLM\SOFTWARE\Policies\Tailscale') {
+if ($policyKey -ne 'HKLM\SOFTWARE\Policies\Tailscale') {
     throw "The install record points at an unexpected policy key. No policies were changed."
 }
 
-if (-not $record.policies) {
+if (-not $policies) {
     throw "The install record does not list any policies. No policies were changed."
 }
 
@@ -597,9 +681,9 @@ $removed = New-Object System.Collections.Generic.List[string]
 $leftAlone = New-Object System.Collections.Generic.List[string]
 
 if (Test-Path -LiteralPath $PolicyKeyPath) {
-    foreach ($policy in $record.policies) {
-        $name = [string]$policy.name
-        $expected = [string]$policy.value
+    foreach ($policy in @($policies)) {
+        $name = [string](Get-StrictProperty -Object $policy -Name 'name')
+        $expected = [string](Get-StrictProperty -Object $policy -Name 'value')
 
         if (-not $AllowedCameraPolicies.ContainsKey($name)) {
             $leftAlone.Add("$name (not a HomePictures camera policy)")
@@ -628,7 +712,7 @@ if (Test-Path -LiteralPath $PolicyKeyPath) {
     }
 
     $remaining = (Get-Item -LiteralPath $PolicyKeyPath).GetValueNames()
-    if ($remaining.Count -eq 0 -and $record.createdPolicyKey -eq $true) {
+    if ($remaining.Count -eq 0 -and $createdPolicyKey -eq $true) {
         Remove-Item -LiteralPath $PolicyKeyPath
         Write-Info "Removed the empty HomePictures-created policy key."
     }
@@ -709,7 +793,10 @@ function Install-OfficialTailscale {
 
     Write-Info "Installing official Tailscale $($Target.Version) ($($Target.Arch))."
     $process = Start-Process -FilePath $msiexec -ArgumentList $arguments -Wait -PassThru
-    $code = $process.ExitCode
+    $code = Get-StrictProperty -Object $process -Name 'ExitCode'
+    if ($null -eq $code) {
+        throw "The official Tailscale installer did not report an exit code."
+    }
     if ($code -ne 0 -and $code -ne 3010) {
         throw "The official Tailscale installer failed with exit code $code."
     }
@@ -750,6 +837,7 @@ function Show-SuccessMessage {
     Write-Info "  $RestorePath"
 }
 
+#region HomePictures-Main
 try {
     Write-Info "HomePictures camera-safe Tailscale installer"
     Write-Info "This script has no passwords, share links, camera URLs, or auth keys."

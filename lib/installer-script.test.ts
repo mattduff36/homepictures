@@ -67,6 +67,8 @@ test("the public installer leaves existing Tailscale installs and managed polici
   assert.match(installer, /function Get-ManagedPolicyInspection/);
   assert.match(installer, /will not overwrite a managed configuration/);
   assert.match(installer, /Connect Camera Access/);
+  assert.match(installer, /function Test-IsTailscaleUninstallDisplayName/);
+  assert.match(installer, /PSObject\.Properties\['DisplayName'\]/);
 });
 
 test("the public installer applies only the camera-safe registry policies", () => {
