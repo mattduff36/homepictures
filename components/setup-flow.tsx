@@ -12,9 +12,21 @@ import { WindowsLogo } from "@phosphor-icons/react/dist/csr/WindowsLogo";
 import { PROGRESS_STORAGE_KEY } from "@/lib/constants";
 import {
   detectPlatform,
-  PLATFORM_ORDER,
+  OTHER_PLATFORM_ORDER,
   TAILSCALE_DOWNLOADS,
 } from "@/lib/platforms";
+import {
+  OTHER_PLATFORM_NOTE,
+  WINDOWS_INSTALLER_FILENAME,
+  WINDOWS_INSTALLER_PATH,
+  WINDOWS_INSTALLER_STEPS,
+  WINDOWS_PRIMARY_ACTION,
+  WINDOWS_PRIMARY_HEADING,
+  WINDOWS_PRIMARY_HEADING_RECOMMENDED,
+  WINDOWS_PRIMARY_SUPPORTING,
+  WINDOWS_SECONDARY_ACTION,
+  WINDOWS_SECONDARY_SUPPORTING,
+} from "@/lib/windows-installer";
 
 type Progress = {
   tailscaleInstalled: boolean;
@@ -250,8 +262,43 @@ export function SetupFlow({
               Tailscale creates the secure private connection required to access
               the cameras. The cameras are not exposed directly to the internet.
             </p>
+            <div
+              className="windows-install space-y-3 rounded-[var(--radius)] border p-4"
+              data-recommended={recommended === "windows"}
+            >
+              <p className="font-semibold text-ink">
+                {recommended === "windows"
+                  ? WINDOWS_PRIMARY_HEADING_RECOMMENDED
+                  : WINDOWS_PRIMARY_HEADING}
+              </p>
+              <p>{WINDOWS_PRIMARY_SUPPORTING}</p>
+              <a
+                className="btn btn-primary w-full sm:w-auto"
+                href={WINDOWS_INSTALLER_PATH}
+                download={WINDOWS_INSTALLER_FILENAME}
+              >
+                <WindowsLogo size={18} weight="regular" aria-hidden="true" />
+                {WINDOWS_PRIMARY_ACTION}
+              </a>
+              <ol className="list-decimal space-y-1 pl-5 text-sm">
+                {WINDOWS_INSTALLER_STEPS.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+              <button
+                type="button"
+                className="btn btn-secondary min-h-10 px-3 text-sm"
+                onClick={() => {
+                  update({ tailscaleInstalled: true });
+                  scrollToId("step-2");
+                }}
+              >
+                {WINDOWS_SECONDARY_ACTION}
+              </button>
+              <p className="text-sm">{WINDOWS_SECONDARY_SUPPORTING}</p>
+            </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {PLATFORM_ORDER.map((id) => {
+              {OTHER_PLATFORM_ORDER.map((id) => {
                 const platform = TAILSCALE_DOWNLOADS[id];
                 const Icon = PLATFORM_ICONS[id];
                 const isRecommended = recommended === id;
@@ -278,16 +325,7 @@ export function SetupFlow({
                 );
               })}
             </div>
-            <button
-              type="button"
-              className="text-left font-medium text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
-              onClick={() => {
-                update({ tailscaleInstalled: true });
-                scrollToId("step-2");
-              }}
-            >
-              Already have Tailscale? Continue to Step 2.
-            </button>
+            <p className="text-sm">{OTHER_PLATFORM_NOTE}</p>
           </Step>
 
           <Step

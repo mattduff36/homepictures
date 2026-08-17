@@ -11,6 +11,24 @@ There are two security layers:
 
 The portal password cannot bypass Tailscale. If the portal is compromised, an attacker may still obtain the Tailscale share link. Treat that link like a password. Revoke it and any accepted shares immediately.
 
+## Windows camera installer
+
+Windows visitors who do not already have Tailscale can download a public, auditable script:
+
+`/Install-CCTV-Tailscale.ps1`
+
+On a PC where Tailscale is not installed, the script downloads the current stable official installer from `https://pkgs.tailscale.com/stable/`, checks the published SHA-256 hash, requires a valid Authenticode signature from Tailscale Inc., then writes camera-safe machine policies. It does not use an auth key and does not sign the person in.
+
+If Tailscale is already installed, or if `HKLM\SOFTWARE\Policies\Tailscale` already has policy values, the script makes no changes.
+
+The script contains no `SETUP_PASSWORD`, session secret, share link, camera URL, or Tailscale auth key. Those stay on the server and are only shown after portal login.
+
+To undo only the camera-specific policies on a PC that used this installer, run:
+
+`C:\ProgramData\MPDEE\HomePictures\Restore-Tailscale-Defaults.ps1`
+
+That restore script deletes a policy only when it still matches the HomePictures record. It does not uninstall Tailscale.
+
 ## Local development
 
 Requirements: Node.js 22 or later, npm.

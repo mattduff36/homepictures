@@ -147,6 +147,16 @@ input {
   background: var(--secure-dim);
 }
 
+.windows-install {
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+
+.windows-install[data-recommended="true"] {
+  border-color: var(--secure);
+  background: var(--secure-dim);
+}
+
 .field {
   width: 100%;
   min-height: 3rem;

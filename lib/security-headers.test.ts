@@ -20,4 +20,5 @@ test("only HTML and auth routes disable store", () => {
   assert.equal(shouldDisableStore("/"), true);
   assert.equal(shouldDisableStore("/api/login"), true);
   assert.equal(shouldDisableStore("/_next/static/chunk.js"), false);
+  assert.equal(shouldDisableStore("/Install-CCTV-Tailscale.ps1"), false);
 });

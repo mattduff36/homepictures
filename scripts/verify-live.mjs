@@ -41,10 +41,23 @@ assert.doesNotMatch(unauthenticated.text, new RegExp(cameraCanary));
 assert.match(unauthenticated.text, /Home Camera Access/);
 assert.match(unauthenticated.text, /Private authorised access only/);
 assert.doesNotMatch(unauthenticated.text, /Install Tailscale/);
+assert.doesNotMatch(unauthenticated.text, /Install Tailscale for Camera Access/);
 assert.match(
   header(unauthenticated.response.headers, "cache-control") ?? "",
   /no-store/i,
 );
+
+const installer = await read("/Install-CCTV-Tailscale.ps1");
+assert.equal(installer.response.status, 200);
+assert.match(installer.text, /HomePictures camera-safe Tailscale installer/);
+assert.match(installer.text, /UseTailscaleDNSSettings/);
+assert.doesNotMatch(installer.text, /SETUP_PASSWORD/);
+assert.doesNotMatch(installer.text, /SESSION_SECRET/);
+assert.doesNotMatch(installer.text, /TAILSCALE_SHARE_URL/);
+assert.doesNotMatch(installer.text, /CAMERA_URL/);
+assert.doesNotMatch(installer.text, new RegExp(shareCanary));
+assert.doesNotMatch(installer.text, new RegExp(cameraCanary));
+assert.doesNotMatch(installer.text, new RegExp(password));
 assert.match(
   header(unauthenticated.response.headers, "content-security-policy") ?? "",
   /frame-ancestors 'none'/,
@@ -143,6 +156,8 @@ assert.equal(authenticated.response.status, 200);
 assert.match(authenticated.text, new RegExp(shareCanary));
 assert.match(authenticated.text, new RegExp(cameraCanary));
 assert.match(authenticated.text, /Install Tailscale/);
+assert.match(authenticated.text, /Install Tailscale for Camera Access/);
+assert.match(authenticated.text, /I already have Tailscale/);
 assert.match(
   header(authenticated.response.headers, "cache-control") ?? "",
   /private/i,

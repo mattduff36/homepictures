@@ -37,7 +37,7 @@ export const config = {
   matcher: [
     {
       source:
-        "/((?!_next/static|_next/image|favicon.ico|icon.svg|.*\\.(?:svg|png|ico|webmanifest)$).*)",
+        "/((?!_next/static|_next/image|favicon.ico|icon.svg|.*\\.(?:svg|png|ico|webmanifest|ps1)$).*)",
     },
   ],
 };

@@ -1,3 +1,8 @@
+import {
+  OTHER_PLATFORM_IDS,
+  WINDOWS_INSTALLER_PATH,
+} from "@/lib/windows-installer";
+
 export type PlatformId = "windows" | "macos" | "ios" | "android" | "linux";
 
 export const TAILSCALE_DOWNLOADS: Record<
@@ -6,7 +11,7 @@ export const TAILSCALE_DOWNLOADS: Record<
 > = {
   windows: {
     label: "Windows",
-    href: "https://tailscale.com/download/windows",
+    href: WINDOWS_INSTALLER_PATH,
   },
   macos: {
     label: "macOS",
@@ -32,6 +37,10 @@ export const PLATFORM_ORDER: PlatformId[] = [
   "ios",
   "android",
   "linux",
+];
+
+export const OTHER_PLATFORM_ORDER: Exclude<PlatformId, "windows">[] = [
+  ...OTHER_PLATFORM_IDS,
 ];
 
 export function detectPlatform(): PlatformId | null {
