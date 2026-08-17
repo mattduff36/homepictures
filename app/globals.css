@@ -1,0 +1,211 @@
+@import "tailwindcss";
+
+:root {
+  --canvas: #0c0d0f;
+  --panel: #16181c;
+  --panel-2: #1c1f24;
+  --ink: #f3f4f6;
+  --mute: #a4abb4;
+  --line: #2c3036;
+  --secure: #2a7a45;
+  --secure-ink: #f7fbf8;
+  --secure-soft: #5fb87a;
+  --secure-dim: #163422;
+  --danger: #d16a6a;
+  --focus: #e8eaed;
+  --radius: 6px;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-ink: var(--ink);
+  --color-mute: var(--mute);
+  --color-line: var(--line);
+  --color-secure: var(--secure);
+  --color-secure-ink: var(--secure-ink);
+  --color-secure-soft: var(--secure-soft);
+  --color-secure-dim: var(--secure-dim);
+  --color-danger: var(--danger);
+  --color-focus: var(--focus);
+  --font-sans: var(--font-barlow);
+}
+
+html {
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+body {
+  min-height: 100dvh;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-barlow), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss01" 0;
+}
+
+::selection {
+  background: var(--secure);
+  color: var(--secure-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+input {
+  caret-color: var(--secure-soft);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3a3e45;
+  border: 2px solid var(--canvas);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-align: center;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--secure);
+  color: var(--secure-ink);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #246b3c;
+}
+
+.btn-secondary {
+  background: var(--panel-2);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #24282e;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--mute);
+  border-color: var(--line);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--panel);
+}
+
+.btn-platform {
+  justify-content: flex-start;
+  background: var(--panel);
+  color: var(--ink);
+  border-color: var(--line);
+  min-height: 3.25rem;
+}
+
+.btn-platform:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.btn-platform[data-recommended="true"] {
+  border-color: var(--secure);
+  background: var(--secure-dim);
+}
+
+.field {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.75rem 3rem 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.field::placeholder {
+  color: #8d949e;
+}
+
+.field[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step-index[data-complete="true"] {
+  background: var(--secure);
+  border-color: var(--secure);
+  color: var(--secure-ink);
+}
+
+details.disclosure > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+details.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
