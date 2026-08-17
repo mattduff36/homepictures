@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { CAMERA_SAFE_TAILSCALE_POLICIES } from "./windows-installer";
+import {
+  CAMERA_SAFE_TAILSCALE_POLICIES,
+  HOMEPICTURES_LEGACY_STATE_DIR,
+  HOMEPICTURES_RECORD_PATH,
+  HOMEPICTURES_RESTORE_PATH,
+  HOMEPICTURES_STATE_DIR,
+} from "./windows-installer";
 
 const root = process.cwd();
 const installer = readFileSync(
@@ -86,9 +92,76 @@ test("the public installer applies only the camera-safe registry policies", () =
 
 test("the public installer can roll back only policies it wrote", () => {
   assert.match(installer, /function Undo-HomePicturesPolicies/);
-  assert.match(installer, /C:\\ProgramData\\MPDEE\\HomePictures/);
+  assert.match(installer, /C:\\ProgramData\\MPDEE-HomePictures/);
   assert.match(installer, /Restore-Tailscale-Defaults\.ps1/);
   assert.match(installer, /homepictures-tailscale-record\.json/);
+  assert.match(installer, /\$script:CreatedStateDir/);
+  assert.match(installer, /\$script:WroteStateFiles/);
+  assert.match(
+    installer,
+    /try \{\s*Install-CameraSafePolicies\s*Install-OfficialTailscale[\s\S]*Undo-HomePicturesPolicies/,
+  );
+});
+
+test("trusted installer state uses only the dedicated MPDEE-HomePictures directory", () => {
+  const legacyPattern = new RegExp(
+    HOMEPICTURES_LEGACY_STATE_DIR.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
+
+  assert.equal(HOMEPICTURES_STATE_DIR, "C:\\ProgramData\\MPDEE-HomePictures");
+  assert.match(installer, /Join-Path \$env:ProgramData 'MPDEE-HomePictures'/);
+  assert.match(restore, /Join-Path \$env:ProgramData 'MPDEE-HomePictures'/);
+  assert.match(
+    installer,
+    new RegExp(HOMEPICTURES_RECORD_PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
+  assert.match(
+    installer,
+    new RegExp(HOMEPICTURES_RESTORE_PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
+  assert.match(
+    restore,
+    new RegExp(HOMEPICTURES_RECORD_PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
+  assert.doesNotMatch(installer, legacyPattern);
+  assert.doesNotMatch(restore, legacyPattern);
+  assert.doesNotMatch(installer, /Join-Path \$env:ProgramData 'MPDEE'/);
+  assert.doesNotMatch(restore, /Join-Path \$env:ProgramData 'MPDEE'/);
+  assert.doesNotMatch(installer, /C:\\ProgramData\\MPDEE exists/);
+  assert.doesNotMatch(installer, /C:\\ProgramData\\MPDEE\\HomePictures/);
+  assert.doesNotMatch(restore, /C:\\ProgramData\\MPDEE\\HomePictures/);
+});
+
+test("the dedicated state directory is created only after elevation and verified before use", () => {
+  const protect = installer.slice(
+    installer.indexOf("function Protect-HomePicturesStateDir"),
+    installer.indexOf("function Show-ManagedPolicyMessage"),
+  );
+  const existingBranch = protect.slice(0, protect.indexOf("New-Item"));
+  const createBranch = protect.slice(protect.indexOf("New-Item"));
+  const main = installer.slice(installer.indexOf("#region HomePictures-Main"));
+
+  assert.match(installer, /function Protect-HomePicturesStateDir/);
+  assert.match(installer, /function Assert-ExistingHomePicturesStateDir/);
+  assert.match(installer, /function Assert-ProtectedStateAcl/);
+  assert.match(installer, /function Test-DirectoryOwnerIsPrivileged/);
+  assert.match(installer, /function Assert-TrustedStateFile/);
+  assert.match(installer, /function Protect-HomePicturesStateFile/);
+  assert.match(installer, /function New-AdminOnlyFileAcl/);
+  assert.match(installer, /was not empty after creation/);
+  assert.match(installer, /AreAccessRulesProtected/);
+  assert.match(installer, /SetAccessRuleProtection\(\$true, \$false\)/);
+  assert.match(installer, /SetOwner\(\$adminSid\)/);
+  assert.doesNotMatch(existingBranch, /Set-Acl/);
+  assert.doesNotMatch(existingBranch, /New-AdminOnlyDirectoryAcl/);
+  assert.match(createBranch, /Set-Acl/);
+  assert.match(createBranch, /Assert-ProtectedStateAcl/);
+  assert.match(createBranch, /Test-NotReparsePoint/);
+  assert.ok(main.indexOf("Restart-Elevated") < main.indexOf("Install-CameraSafePolicies"));
+  assert.ok(
+    installer.indexOf("Protect-HomePicturesStateDir") <
+      installer.indexOf("$script:WroteStateFiles = $true"),
+  );
 });
 
 test("the restore script refuses to delete unrelated Tailscale policies", () => {

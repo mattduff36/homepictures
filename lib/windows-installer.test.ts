@@ -5,6 +5,9 @@ import { test } from "node:test";
 import { TAILSCALE_DOWNLOADS } from "./platforms";
 import {
   CAMERA_SAFE_TAILSCALE_POLICIES,
+  HOMEPICTURES_LEGACY_STATE_DIR,
+  HOMEPICTURES_RECORD_PATH,
+  HOMEPICTURES_RESTORE_PATH,
   HOMEPICTURES_STATE_DIR,
   OTHER_PLATFORM_NOTE,
   TAILSCALE_POLICY_KEY,
@@ -39,7 +42,17 @@ test("camera-safe policy contract matches the supported Tailscale registry value
       ["ExitNodesPicker", "hide"],
     ],
   );
-  assert.equal(HOMEPICTURES_STATE_DIR, "C:\\ProgramData\\MPDEE\\HomePictures");
+  assert.equal(HOMEPICTURES_STATE_DIR, "C:\\ProgramData\\MPDEE-HomePictures");
+  assert.equal(
+    HOMEPICTURES_RECORD_PATH,
+    "C:\\ProgramData\\MPDEE-HomePictures\\homepictures-tailscale-record.json",
+  );
+  assert.equal(
+    HOMEPICTURES_RESTORE_PATH,
+    "C:\\ProgramData\\MPDEE-HomePictures\\Restore-Tailscale-Defaults.ps1",
+  );
+  assert.equal(HOMEPICTURES_LEGACY_STATE_DIR, "C:\\ProgramData\\MPDEE\\HomePictures");
+  assert.notEqual(HOMEPICTURES_STATE_DIR, HOMEPICTURES_LEGACY_STATE_DIR);
 });
 
 test("Step 1 copy matches the Windows onboarding contract", () => {

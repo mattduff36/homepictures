@@ -23,11 +23,13 @@ If Tailscale is already installed, or if `HKLM\SOFTWARE\Policies\Tailscale` alre
 
 The script contains no `SETUP_PASSWORD`, session secret, share link, camera URL, or Tailscale auth key. Those stay on the server and are only shown after portal login.
 
+Trusted installer state is stored only in `C:\ProgramData\MPDEE-HomePictures`. The installer does not use `C:\ProgramData\MPDEE`, which may be writable by other MPDEE software.
+
 To undo only the camera-specific policies on a PC that used this installer, run:
 
-`C:\ProgramData\MPDEE\HomePictures\Restore-Tailscale-Defaults.ps1`
+`C:\ProgramData\MPDEE-HomePictures\Restore-Tailscale-Defaults.ps1`
 
-That restore script deletes a policy only when it still matches the HomePictures record. It does not uninstall Tailscale.
+That restore script reads `C:\ProgramData\MPDEE-HomePictures\homepictures-tailscale-record.json` and deletes a policy only when it still matches the HomePictures record. It does not uninstall Tailscale.
 
 ## Local development
 

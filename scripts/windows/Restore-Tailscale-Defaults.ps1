@@ -4,7 +4,7 @@
   Removes only Tailscale policies written by the HomePictures camera installer.
 
 .DESCRIPTION
-  Reads C:\ProgramData\MPDEE\HomePictures\homepictures-tailscale-record.json
+  Reads C:\ProgramData\MPDEE-HomePictures\homepictures-tailscale-record.json
   and deletes a policy value only when all of these are true:
 
   - the record was created by HomePictures for the camera-viewing client
@@ -21,7 +21,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$StateDir = Join-Path $env:ProgramData 'MPDEE\HomePictures'
+$StateDir = Join-Path $env:ProgramData 'MPDEE-HomePictures'
 $RecordPath = Join-Path $StateDir 'homepictures-tailscale-record.json'
 $PolicyKeyPath = 'HKLM:\SOFTWARE\Policies\Tailscale'
 

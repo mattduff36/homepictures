@@ -21,6 +21,8 @@
 
 .NOTES
   Public, auditable script. Safe to read before running.
+  Trusted state is stored only in C:\ProgramData\MPDEE-HomePictures.
+  Restore script: C:\ProgramData\MPDEE-HomePictures\Restore-Tailscale-Defaults.ps1
 #>
 [CmdletBinding()]
 param()
@@ -31,7 +33,7 @@ $ErrorActionPreference = 'Stop'
 $OfficialPackageRoot = 'https://pkgs.tailscale.com/stable/'
 $PolicyKeyPath = 'HKLM:\SOFTWARE\Policies\Tailscale'
 $PolicyKeyDisplay = 'HKLM\SOFTWARE\Policies\Tailscale'
-$StateDir = Join-Path $env:ProgramData 'MPDEE\HomePictures'
+$StateDir = Join-Path $env:ProgramData 'MPDEE-HomePictures'
 $RecordPath = Join-Path $StateDir 'homepictures-tailscale-record.json'
 $RestorePath = Join-Path $StateDir 'Restore-Tailscale-Defaults.ps1'
 $ExpectedSignerCn = 'Tailscale Inc.'
@@ -46,6 +48,8 @@ $CameraSafePolicies = @(
 
 $script:TempDirectory = $null
 $script:CreatedPolicyKey = $false
+$script:CreatedStateDir = $false
+$script:WroteStateFiles = $false
 $script:WrotePolicyNames = New-Object System.Collections.Generic.List[string]
 $script:PoliciesApplied = $false
 $script:SkipWait = $false
@@ -272,6 +276,7 @@ function New-AdminOnlyDirectoryAcl {
     $acl.SetAccessRuleProtection($true, $false)
     $adminSid = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'
     $systemSid = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18'
+    $acl.SetOwner($adminSid)
     foreach ($sid in @($adminSid, $systemSid)) {
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             $sid,
@@ -285,22 +290,58 @@ function New-AdminOnlyDirectoryAcl {
     return $acl
 }
 
+function New-AdminOnlyFileAcl {
+    $acl = New-Object System.Security.AccessControl.FileSecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $adminSid = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'
+    $systemSid = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18'
+    $acl.SetOwner($adminSid)
+    foreach ($sid in @($adminSid, $systemSid)) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $sid,
+            'FullControl',
+            'Allow'
+        )
+        $acl.AddAccessRule($rule) | Out-Null
+    }
+    return $acl
+}
+
+function Resolve-IdentitySid {
+    param($IdentityReference)
+
+    if ($null -eq $IdentityReference) {
+        return $null
+    }
+
+    try {
+        return $IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    } catch {
+    }
+
+    $value = [string](Get-StrictProperty -Object $IdentityReference -Name 'Value')
+    if ($value -match '^S-\d-') {
+        return $value
+    }
+
+    try {
+        return (New-Object System.Security.Principal.NTAccount ([string]$IdentityReference)).Translate(
+            [System.Security.Principal.SecurityIdentifier]
+        ).Value
+    } catch {
+        return $null
+    }
+}
+
 function Test-IsPrivilegedIdentity {
     param($IdentityReference)
 
-    try {
-        $sid = $IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
-    } catch {
-        $sid = [string]$IdentityReference.Value
-    }
-
+    $sid = Resolve-IdentitySid $IdentityReference
     return $sid -in @('S-1-5-32-544', 'S-1-5-18')
 }
 
-function Test-DirectoryIsAdminControlled {
-    param([Parameter(Mandatory)][string]$Path)
-
-    $writeRights = [System.Security.AccessControl.FileSystemRights]::Write -bor
+function Get-WriteCapableRights {
+    return [System.Security.AccessControl.FileSystemRights]::Write -bor
         [System.Security.AccessControl.FileSystemRights]::Modify -bor
         [System.Security.AccessControl.FileSystemRights]::FullControl -bor
         [System.Security.AccessControl.FileSystemRights]::CreateDirectories -bor
@@ -309,44 +350,187 @@ function Test-DirectoryIsAdminControlled {
         [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
         [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
         [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+}
+
+function Get-DirectoryOwnerSid {
+    param([Parameter(Mandatory)][string]$Path)
 
     $acl = Get-Acl -LiteralPath $Path
-    foreach ($rule in $acl.Access) {
-        if ($rule.AccessControlType -ne 'Allow') {
+    try {
+        $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+        $sid = Get-StrictProperty -Object $owner -Name 'Value'
+        if ($sid) {
+            return $sid
+        }
+    } catch {
+    }
+
+    return Resolve-IdentitySid (Get-StrictProperty -Object $acl -Name 'Owner')
+}
+
+function Test-DirectoryOwnerIsPrivileged {
+    param([Parameter(Mandatory)][string]$Path)
+
+    return (Get-DirectoryOwnerSid $Path) -in @('S-1-5-32-544', 'S-1-5-18')
+}
+
+function Test-DirectoryIsAdminControlled {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-DirectoryOwnerIsPrivileged $Path)) {
+        return $false
+    }
+
+    $writeRights = Get-WriteCapableRights
+    $acl = Get-Acl -LiteralPath $Path
+    $rules = Get-StrictProperty -Object $acl -Name 'Access'
+    foreach ($rule in @($rules)) {
+        $controlType = Get-StrictProperty -Object $rule -Name 'AccessControlType'
+        if ($controlType -ne 'Allow') {
             continue
         }
-        if (Test-IsPrivilegedIdentity $rule.IdentityReference) {
+        $identity = Get-StrictProperty -Object $rule -Name 'IdentityReference'
+        if (Test-IsPrivilegedIdentity $identity) {
             continue
         }
-        if (($rule.FileSystemRights -band $writeRights) -ne 0) {
+        $rights = Get-StrictProperty -Object $rule -Name 'FileSystemRights'
+        if ($null -ne $rights -and ($rights -band $writeRights) -ne 0) {
             return $false
         }
     }
     return $true
 }
 
-function Protect-HomePicturesStateDir {
-    $mpdee = Join-Path $env:ProgramData 'MPDEE'
+function Assert-ProtectedStateAcl {
+    param([Parameter(Mandatory)][string]$Path)
 
-    if (Test-Path -LiteralPath $mpdee) {
-        Test-NotReparsePoint $mpdee
-        if (-not (Test-DirectoryIsAdminControlled $mpdee)) {
-            throw "C:\ProgramData\MPDEE exists and is writable by a non-administrator. Installation stopped."
+    $acl = Get-Acl -LiteralPath $Path
+    $protected = Get-StrictProperty -Object $acl -Name 'AreAccessRulesProtected'
+    if ($protected -ne $true) {
+        throw "The HomePictures state directory still inherits permissions. Installation stopped."
+    }
+
+    if (-not (Test-DirectoryOwnerIsPrivileged $Path)) {
+        throw "The HomePictures state directory is not owned by Administrators or SYSTEM. Installation stopped."
+    }
+
+    if (-not (Test-DirectoryIsAdminControlled $Path)) {
+        throw "The HomePictures state directory is writable by a non-administrator. Installation stopped."
+    }
+
+    $writeRights = Get-WriteCapableRights
+    $fullControl = [System.Security.AccessControl.FileSystemRights]::FullControl
+    $seenAdmin = $false
+    $seenSystem = $false
+    $rules = Get-StrictProperty -Object $acl -Name 'Access'
+    foreach ($rule in @($rules)) {
+        $controlType = Get-StrictProperty -Object $rule -Name 'AccessControlType'
+        if ($controlType -ne 'Allow') {
+            continue
         }
-    } else {
-        New-Item -ItemType Directory -Path $mpdee -Force | Out-Null
-        Test-NotReparsePoint $mpdee
-        Set-Acl -LiteralPath $mpdee -AclObject (New-AdminOnlyDirectoryAcl)
+        $identity = Get-StrictProperty -Object $rule -Name 'IdentityReference'
+        $rights = Get-StrictProperty -Object $rule -Name 'FileSystemRights'
+        if ($null -eq $identity -or $null -eq $rights) {
+            throw "The HomePictures state directory ACL could not be verified. Installation stopped."
+        }
+        if (-not (Test-IsPrivilegedIdentity $identity)) {
+            if (($rights -band $writeRights) -ne 0) {
+                throw "The HomePictures state directory grants write access to a non-administrator. Installation stopped."
+            }
+            continue
+        }
+
+        $sid = Resolve-IdentitySid $identity
+        if (($rights -band $fullControl) -eq $fullControl) {
+            if ($sid -eq 'S-1-5-32-544') { $seenAdmin = $true }
+            if ($sid -eq 'S-1-5-18') { $seenSystem = $true }
+        }
     }
 
-    if (Test-Path -LiteralPath $StateDir) {
-        Test-NotReparsePoint $StateDir
-    } else {
-        New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
-        Test-NotReparsePoint $StateDir
+    if (-not $seenAdmin -or -not $seenSystem) {
+        throw "The HomePictures state directory must grant FullControl only to Administrators and SYSTEM. Installation stopped."
     }
+}
+
+function Assert-ExistingHomePicturesStateDir {
+    if (-not (Test-Path -LiteralPath $StateDir -PathType Container)) {
+        throw "C:\ProgramData\MPDEE-HomePictures exists and is not a directory. Installation stopped."
+    }
+
+    Test-NotReparsePoint $StateDir
+    if (-not (Test-DirectoryIsAdminControlled $StateDir)) {
+        throw "C:\ProgramData\MPDEE-HomePictures exists and is writable by a non-administrator. Installation stopped."
+    }
+
+    Test-NotReparsePoint $StateDir
+    if (-not (Test-DirectoryIsAdminControlled $StateDir)) {
+        throw "C:\ProgramData\MPDEE-HomePictures changed during verification. Installation stopped."
+    }
+}
+
+function Assert-TrustedStateFile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        throw "A HomePictures state file path exists and is not a file. Installation stopped."
+    }
+
+    Test-NotReparsePoint $Path
+    if (-not (Test-DirectoryIsAdminControlled $Path)) {
+        throw "A HomePictures state file is writable by a non-administrator. Installation stopped."
+    }
+}
+
+function Protect-HomePicturesStateFile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "A HomePictures state file was not created as a real file. Installation stopped."
+    }
+
+    Test-NotReparsePoint $Path
+    Set-Acl -LiteralPath $Path -AclObject (New-AdminOnlyFileAcl)
+    Test-NotReparsePoint $Path
+    if (-not (Test-DirectoryIsAdminControlled $Path)) {
+        throw "A HomePictures state file is writable by a non-administrator. Installation stopped."
+    }
+}
+
+function Protect-HomePicturesStateDir {
+    if (Test-Path -LiteralPath $StateDir) {
+        Assert-ExistingHomePicturesStateDir
+        return
+    }
+
+    try {
+        New-Item -ItemType Directory -Path $StateDir | Out-Null
+        $script:CreatedStateDir = $true
+    } catch {
+        if (Test-Path -LiteralPath $StateDir) {
+            Assert-ExistingHomePicturesStateDir
+            return
+        }
+        throw
+    }
+
+    if (-not (Test-Path -LiteralPath $StateDir -PathType Container)) {
+        throw "Failed to create a real HomePictures state directory. Installation stopped."
+    }
+    Test-NotReparsePoint $StateDir
 
     Set-Acl -LiteralPath $StateDir -AclObject (New-AdminOnlyDirectoryAcl)
+
+    Test-NotReparsePoint $StateDir
+    Assert-ProtectedStateAcl $StateDir
+
+    $planted = @(Get-ChildItem -LiteralPath $StateDir -Force)
+    if ($planted.Count -gt 0) {
+        throw "The HomePictures state directory was not empty after creation. Installation stopped."
+    }
 }
 
 function Show-ManagedPolicyMessage {
@@ -535,7 +719,12 @@ function Assert-TailscaleAuthenticode {
 }
 
 function Undo-HomePicturesPolicies {
-    if (-not $script:PoliciesApplied -and $script:WrotePolicyNames.Count -eq 0 -and -not $script:CreatedPolicyKey) {
+    $shouldUndo = $script:PoliciesApplied -or
+        $script:WrotePolicyNames.Count -gt 0 -or
+        $script:CreatedPolicyKey -or
+        $script:CreatedStateDir -or
+        $script:WroteStateFiles
+    if (-not $shouldUndo) {
         return
     }
 
@@ -558,14 +747,46 @@ function Undo-HomePicturesPolicies {
         }
     }
 
-    if (Test-Path -LiteralPath $RecordPath) {
-        Remove-Item -LiteralPath $RecordPath -Force -ErrorAction SilentlyContinue
+    $stateDirSafe = $false
+    if (Test-Path -LiteralPath $StateDir) {
+        try {
+            Test-NotReparsePoint $StateDir
+            $stateDirSafe = $true
+        } catch {
+            $stateDirSafe = $false
+        }
     }
-    if (Test-Path -LiteralPath $RestorePath) {
-        Remove-Item -LiteralPath $RestorePath -Force -ErrorAction SilentlyContinue
+
+    if ($stateDirSafe -and ($script:WroteStateFiles -or $script:CreatedStateDir)) {
+        foreach ($path in @($RecordPath, $RestorePath)) {
+            if (-not (Test-Path -LiteralPath $path)) {
+                continue
+            }
+            try {
+                Test-NotReparsePoint $path
+            } catch {
+                continue
+            }
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($script:CreatedStateDir -and $stateDirSafe -and (Test-Path -LiteralPath $StateDir)) {
+        try {
+            Test-NotReparsePoint $StateDir
+            if (Test-Path -LiteralPath $StateDir -PathType Container) {
+                $children = @(Get-ChildItem -LiteralPath $StateDir -Force)
+                if ($children.Count -eq 0) {
+                    Remove-Item -LiteralPath $StateDir -Force
+                }
+            }
+        } catch {
+        }
     }
 
     $script:PoliciesApplied = $false
+    $script:WroteStateFiles = $false
+    $script:CreatedStateDir = $false
     $script:WrotePolicyNames.Clear()
 }
 
@@ -577,7 +798,7 @@ function Write-RestoreScript {
   Removes only Tailscale policies written by the HomePictures camera installer.
 
 .DESCRIPTION
-  Reads C:\ProgramData\MPDEE\HomePictures\homepictures-tailscale-record.json
+  Reads C:\ProgramData\MPDEE-HomePictures\homepictures-tailscale-record.json
   and deletes a policy value only when all of these are true:
 
   - the record was created by HomePictures for the camera-viewing client
@@ -594,7 +815,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$StateDir = Join-Path $env:ProgramData 'MPDEE\HomePictures'
+$StateDir = Join-Path $env:ProgramData 'MPDEE-HomePictures'
 $RecordPath = Join-Path $StateDir 'homepictures-tailscale-record.json'
 $PolicyKeyPath = 'HKLM:\SOFTWARE\Policies\Tailscale'
 
@@ -746,6 +967,8 @@ function Install-CameraSafePolicies {
         throw "The Tailscale policy key could not be inspected. Installation stopped."
     }
 
+    Protect-HomePicturesStateDir
+
     if (-not (Test-Path -LiteralPath $PolicyKeyPath)) {
         New-Item -Path $PolicyKeyPath -Force | Out-Null
         $script:CreatedPolicyKey = $true
@@ -756,11 +979,6 @@ function Install-CameraSafePolicies {
         $script:WrotePolicyNames.Add($policy.Name)
     }
     $script:PoliciesApplied = $true
-
-    if (-not (Test-Path -LiteralPath $StateDir)) {
-        New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
-    }
-    Protect-HomePicturesStateDir
 
     $record = [ordered]@{
         appliedBy        = 'HomePictures'
@@ -776,8 +994,17 @@ function Install-CameraSafePolicies {
         )
     }
 
+    Assert-ExistingHomePicturesStateDir
+    Assert-TrustedStateFile $RecordPath
+    Assert-TrustedStateFile $RestorePath
+
+    $script:WroteStateFiles = $true
     $record | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $RecordPath -Encoding UTF8
     Write-RestoreScript
+
+    Protect-HomePicturesStateFile $RecordPath
+    Protect-HomePicturesStateFile $RestorePath
+    Assert-ExistingHomePicturesStateDir
     Write-Info "Wrote camera-safe Tailscale policies and a restore script."
 }
 

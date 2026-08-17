@@ -30,8 +30,11 @@ export const CAMERA_SAFE_TAILSCALE_POLICIES = [
   { name: "ExitNodesPicker", value: "hide" },
 ] as const;
 
-export const HOMEPICTURES_STATE_DIR = "C:\\ProgramData\\MPDEE\\HomePictures";
+export const HOMEPICTURES_STATE_DIR = "C:\\ProgramData\\MPDEE-HomePictures";
+export const HOMEPICTURES_LEGACY_STATE_DIR = "C:\\ProgramData\\MPDEE\\HomePictures";
 export const HOMEPICTURES_RECORD_FILENAME = "homepictures-tailscale-record.json";
 export const HOMEPICTURES_RESTORE_FILENAME = "Restore-Tailscale-Defaults.ps1";
+export const HOMEPICTURES_RECORD_PATH = `${HOMEPICTURES_STATE_DIR}\\${HOMEPICTURES_RECORD_FILENAME}`;
+export const HOMEPICTURES_RESTORE_PATH = `${HOMEPICTURES_STATE_DIR}\\${HOMEPICTURES_RESTORE_FILENAME}`;
 
 export const OTHER_PLATFORM_IDS = ["macos", "ios", "android", "linux"] as const;
