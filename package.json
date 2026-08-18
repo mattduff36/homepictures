@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test lib/session.test.ts lib/password.test.ts lib/origin.test.ts lib/rate-limit.test.ts lib/request.test.ts lib/security-headers.test.ts lib/windows-installer.test.ts lib/installer-script.test.ts lib/platforms.test.ts lib/powershell-strict-mode.test.ts lib/powershell-state-directory.test.ts"
+    "test": "tsx --test lib/session.test.ts lib/password.test.ts lib/origin.test.ts lib/rate-limit.test.ts lib/request.test.ts lib/security-headers.test.ts lib/windows-installer.test.ts lib/installer-script.test.ts lib/platforms.test.ts lib/powershell-strict-mode.test.ts lib/powershell-state-directory.test.ts lib/powershell-ui-launch.test.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

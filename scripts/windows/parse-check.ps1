@@ -11,6 +11,7 @@ $paths = @(
     (Join-Path $root 'scripts\windows\Restore-Tailscale-Defaults.ps1')
     (Join-Path $root 'scripts\windows\state-directory.test.ps1')
     (Join-Path $root 'scripts\windows\strict-mode-properties.test.ps1')
+    (Join-Path $root 'scripts\windows\start-tailscale-client.test.ps1')
     (Join-Path $root 'scripts\windows\parse-check.ps1')
 )
 

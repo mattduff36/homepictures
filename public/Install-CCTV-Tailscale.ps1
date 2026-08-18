@@ -1034,18 +1034,42 @@ function Install-OfficialTailscale {
     }
 }
 
+function Test-TailscaleUiIsRunning {
+    try {
+        $processes = @(Get-Process -Name 'tailscale-ipn' -ErrorAction SilentlyContinue)
+        return $processes.Count -gt 0
+    } catch {
+        return $false
+    }
+}
+
 function Start-TailscaleClient {
-    $candidates = @(
-        (Join-Path $env:ProgramFiles 'Tailscale\tailscale-ipn.exe')
-        (Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe')
-    )
-    foreach ($path in $candidates) {
-        if (Test-Path -LiteralPath $path) {
-            Start-Process -FilePath $path | Out-Null
+    try {
+        $pollAttempts = 10
+        $pollDelayMs = 500
+        for ($i = 0; $i -lt $pollAttempts; $i++) {
+            if (Test-TailscaleUiIsRunning) {
+                Write-Info "Tailscale client is already open."
+                return
+            }
+            Start-Sleep -Milliseconds $pollDelayMs
+        }
+
+        if (Test-TailscaleUiIsRunning) {
+            Write-Info "Tailscale client is already open."
             return
         }
+
+        $uiPath = Join-Path $env:ProgramFiles 'Tailscale\tailscale-ipn.exe'
+        if (-not (Test-Path -LiteralPath $uiPath)) {
+            throw "The Tailscale UI executable was not found."
+        }
+
+        Start-Process -FilePath $uiPath | Out-Null
+        Write-Info "Opened the Tailscale client."
+    } catch {
+        Write-WarnLine "Tailscale installed successfully, but the app could not be opened automatically. Open Tailscale from the Start menu."
     }
-    Write-WarnLine "Tailscale is installed, but the client could not be opened automatically. Open Tailscale from the Start menu."
 }
 
 function Remove-TempDirectory {
