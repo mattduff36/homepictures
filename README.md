@@ -11,7 +11,15 @@ User flow:
 3. If the check fails, is cancelled, or `CAMERA_URL` is missing, the visitor is sent to `/setup`.
 4. `/setup` is the password-protected Tailscale onboarding page.
 
-`/healthz` lives on the Raspberry Pi camera web server, not on this Vercel site. It should return an empty success response (`204` preferred), `Cache-Control: no-store`, and a CORS allow-list limited to `https://cctv.mpdee.uk`. It must not include camera, version, hostname, or authentication data. It exists only so the browser can detect Tailscale reachability. The camera hostname is still protected by Tailscale; the machine-share URL remains behind the portal password.
+`/healthz` is deployed and verified on the Raspberry Pi. It is not hosted on this Vercel site. The dedicated `cctv-healthz.service` unit binds to `127.0.0.1:8766` and is published through Tailscale Serve. It returns `204 No Content`, `Cache-Control: no-store`, and CORS limited to `https://cctv.mpdee.uk`. It contains no camera, version, hostname, or authentication data. It exists only so the browser can detect Tailscale reachability. The camera hostname is still protected by Tailscale; the machine-share URL remains behind the portal password.
+
+Current persistent Tailscale Serve routes:
+
+- `/` → `http://127.0.0.1:1984` — CCTV PWA
+- `/recordings-api` → `http://127.0.0.1:8765` — playback API
+- `/healthz` → `http://127.0.0.1:8766` — reachability check
+
+Verified on the Pi: CCTV root works, `/recordings-api/health` returns `200`, and `/healthz` returns `204` with the expected CORS header. Existing camera and NVR behaviour was not changed.
 
 There are two security layers:
 
@@ -120,7 +128,11 @@ In Vercel:
 5. Attach the custom domain.
 6. Redeploy after environment-variable changes when required.
 
-After the first production deploy, open the site and confirm:
+The gateway is on `main` and deploys on Vercel. No environment-variable changes are required for this flow. The Pi `/healthz` route is already complete.
+
+Next remaining task: production browser testing of the deployed `https://cctv.mpdee.uk/` gateway (authorised device, disconnected Tailscale, cancel, `/setup` login, and Lock Setup Page).
+
+After a production deploy, open the site and confirm:
 
 - `/` shows the connection gateway, not the password screen.
 - `/` does not include the Tailscale share URL.
@@ -199,7 +211,7 @@ Login attempts are throttled in memory on each serverless instance, about 5 atte
 - Submitted passwords, environment values, Tailscale share URLs, and the camera URL are never logged.
 - The public `/` page necessarily receives `CAMERA_URL` so the browser can check `/healthz` and then open the cameras. Tailscale still controls who can reach that host.
 - After `/setup` login, the browser also receives the Tailscale share URL so the Connect Camera Access button can work. Keep the portal password private.
-- Do not commit camera credentials, RTSP URLs, Raspberry Pi LAN addresses, or internal ports.
+- Do not commit camera credentials, RTSP URLs, or Raspberry Pi LAN addresses. The Tailscale Serve localhost routes above are the published camera HTTPS surface.
 
 ## License
 
