@@ -57,7 +57,7 @@ export function PasswordGate() {
         return;
       }
 
-      window.location.replace("/");
+      window.location.replace("/setup");
     } catch {
       setError("network");
     } finally {

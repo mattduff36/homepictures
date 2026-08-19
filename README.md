@@ -1,13 +1,24 @@
 # Home Camera Access
 
-Public onboarding portal for authorised friends and family. It helps someone install Tailscale, accept camera access, and open the private camera app.
+Public onboarding portal for authorised friends and family. It first checks whether the browser can already reach the private camera server. If not, it helps someone install Tailscale, accept camera access, and open the private camera app.
 
-This site does **not** host or proxy camera streams. The cameras stay private behind Tailscale. This repository is public, so treat every committed file as readable by anyone.
+This site does **not** host or proxy camera streams or health checks. The cameras stay private behind Tailscale. This repository is public, so treat every committed file as readable by anyone.
+
+User flow:
+
+1. `https://cctv.mpdee.uk/` tests whether the visitor's browser can reach the private CCTV server.
+2. If `/healthz` is reachable, the browser opens the private camera URL after a short countdown.
+3. If the check fails, is cancelled, or `CAMERA_URL` is missing, the visitor is sent to `/setup`.
+4. `/setup` is the password-protected Tailscale onboarding page.
+
+`/healthz` lives on the Raspberry Pi camera web server, not on this Vercel site. It should return an empty success response (`204` preferred), `Cache-Control: no-store`, and a CORS allow-list limited to `https://cctv.mpdee.uk`. It must not include camera, version, hostname, or authentication data. It exists only so the browser can detect Tailscale reachability. The camera hostname is still protected by Tailscale; the machine-share URL remains behind the portal password.
 
 There are two security layers:
 
-1. **Setup portal password.** `SETUP_PASSWORD` hides the setup instructions and the capability links on this website.
+1. **Setup portal password.** `SETUP_PASSWORD` hides the setup instructions and the capability links on `/setup`.
 2. **Tailscale.** This is the real access-control boundary for the cameras. Discovering the private camera URL is not enough. The visitor still needs authorised Tailscale access.
+
+The public gateway at `/` necessarily receives `CAMERA_URL` so it can test and then navigate to the camera server. It does **not** receive `TAILSCALE_SHARE_URL`.
 
 The portal password cannot bypass Tailscale. If the portal is compromised, an attacker may still obtain the Tailscale share link. Treat that link like a password. Revoke it and any accepted shares immediately.
 
@@ -69,7 +80,7 @@ Rules:
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). The root page is the connection gateway. Setup remains at [http://localhost:3000/setup](http://localhost:3000/setup).
 
 Useful checks:
 
@@ -88,8 +99,8 @@ Never commit `.env.local` or any file that contains real values.
 | --- | --- | --- |
 | `SETUP_PASSWORD` | Server only | Unlocks the setup portal |
 | `SESSION_SECRET` | Server only | Signs the HttpOnly session cookie |
-| `TAILSCALE_SHARE_URL` | Server only, after login | Capability link that adds the camera server |
-| `CAMERA_URL` | Server only, after login | Private Tailscale Serve URL for the camera PWA |
+| `TAILSCALE_SHARE_URL` | Server only, after `/setup` login | Capability link that adds the camera server |
+| `CAMERA_URL` | Server only; sent to the `/` gateway | Private Tailscale Serve URL for the camera PWA and `/healthz` check |
 
 None of these use `NEXT_PUBLIC_*`. None of them belong in Git.
 
@@ -111,12 +122,13 @@ In Vercel:
 
 After the first production deploy, open the site and confirm:
 
-- The first page is only the password screen.
-- Setup instructions appear only after login.
-- The document response for `/` includes `Cache-Control: private, no-store`.
-- `x-vercel-cache` is not `HIT` or `PRERENDER` for `/` or `/api/login`.
-- After **Lock Setup Page**, the browser Back button does not return you to the unlocked setup page. Setup progress checkmarks remain unless you reset them.
-- The unlocked page hydrates and works. Another site cannot show this portal in an iframe.
+- `/` shows the connection gateway, not the password screen.
+- `/` does not include the Tailscale share URL.
+- Setup instructions and the share URL appear only on `/setup` after login.
+- The document responses for `/` and `/setup` include `Cache-Control: private, no-store`.
+- `x-vercel-cache` is not `HIT` or `PRERENDER` for `/`, `/setup`, or `/api/login`.
+- After **Lock Setup Page**, the browser stays on locked `/setup` and Back does not return you to the unlocked setup page. Setup progress checkmarks remain unless you reset them.
+- The unlocked setup page hydrates and works. Another site cannot show this portal in an iframe.
 
 ## Changing secrets
 
@@ -182,10 +194,11 @@ Login attempts are throttled in memory on each serverless instance, about 5 atte
 ## Security notes
 
 - Authentication is checked on the server. The session cookie is HttpOnly, host-only, `SameSite=Lax`, and `Secure` in production.
-- Authenticated pages and auth API responses use `Cache-Control: private, no-store`.
+- The gateway, authenticated setup page, and auth API responses use `Cache-Control: private, no-store`.
 - The site sends `noindex` metadata and disallows crawlers in `robots.txt`.
 - Submitted passwords, environment values, Tailscale share URLs, and the camera URL are never logged.
-- After login, the browser necessarily receives the two capability URLs so the buttons can work. Keep the portal password private.
+- The public `/` page necessarily receives `CAMERA_URL` so the browser can check `/healthz` and then open the cameras. Tailscale still controls who can reach that host.
+- After `/setup` login, the browser also receives the Tailscale share URL so the Connect Camera Access button can work. Keep the portal password private.
 - Do not commit camera credentials, RTSP URLs, Raspberry Pi LAN addresses, or internal ports.
 
 ## License

@@ -211,6 +211,21 @@ details.disclosure > summary::-webkit-details-marker {
   display: none;
 }
 
+.gateway-spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--secure-soft);
+  border-radius: 999px;
+  animation: gateway-spin 0.8s linear infinite;
+}
+
+@keyframes gateway-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

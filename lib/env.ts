@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Buffer } from "node:buffer";
+import { isHttpsUrl, parseCameraUrl } from "./camera-url";
 import { MIN_SESSION_SECRET_BYTES, MIN_SETUP_PASSWORD_LENGTH } from "./constants";
 
 function readEnv(name: string): string | null {
@@ -11,15 +12,6 @@ function readEnv(name: string): string | null {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function isHttpsUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 export function getSetupPassword(): string | null {
@@ -40,14 +32,18 @@ export function getSessionSecret(): string | null {
   return secret;
 }
 
+export function getCameraUrl(): string | null {
+  return parseCameraUrl(readEnv("CAMERA_URL"));
+}
+
 export function getCapabilityUrls(): {
   cameraUrl: string;
   shareUrl: string;
 } | null {
-  const cameraUrl = readEnv("CAMERA_URL");
+  const cameraUrl = getCameraUrl();
   const shareUrl = readEnv("TAILSCALE_SHARE_URL");
 
-  if (!cameraUrl || !shareUrl || !isHttpsUrl(cameraUrl) || !isHttpsUrl(shareUrl)) {
+  if (!cameraUrl || !shareUrl || !isHttpsUrl(shareUrl)) {
     return null;
   }
 

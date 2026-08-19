@@ -198,7 +198,7 @@ export function SetupFlow({
         return;
       }
 
-      window.location.replace("/");
+      window.location.replace("/setup");
     } catch {
       setLockError("Unable to lock the setup page. Check your connection and try again.");
     } finally {
@@ -464,6 +464,11 @@ export function SetupFlow({
               <li>Check Tailscale says Connected.</li>
               <li>Confirm Camera Access was accepted.</li>
               <li>Return here and press Open Cameras again.</li>
+              <li>
+                If your browser asks whether CCTV can access devices on your
+                local network, allow it. This is used only to check whether
+                your private camera server is reachable.
+              </li>
             </ul>
 
             <h3 className="mt-4 font-medium text-ink">

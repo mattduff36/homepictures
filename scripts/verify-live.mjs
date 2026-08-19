@@ -34,18 +34,43 @@ async function read(path, init = {}) {
 
 const origin = new URL(base).origin;
 
-const unauthenticated = await read("/");
-assert.equal(unauthenticated.response.status, 200);
-assert.doesNotMatch(unauthenticated.text, new RegExp(shareCanary));
-assert.doesNotMatch(unauthenticated.text, new RegExp(cameraCanary));
-assert.match(unauthenticated.text, /Home Camera Access/);
-assert.match(unauthenticated.text, /Private authorised access only/);
-assert.doesNotMatch(unauthenticated.text, /Install Tailscale/);
-assert.doesNotMatch(unauthenticated.text, /Install Tailscale for Camera Access/);
+const gateway = await read("/");
+assert.equal(gateway.response.status, 200);
+assert.match(gateway.text, /Attempting to connect to your CCTV system/);
+assert.match(gateway.text, new RegExp(cameraCanary));
+assert.doesNotMatch(gateway.text, new RegExp(shareCanary));
+assert.doesNotMatch(gateway.text, /Private authorised access only/);
+assert.doesNotMatch(gateway.text, /Install Tailscale/);
+assert.doesNotMatch(gateway.text, /Install Tailscale for Camera Access/);
 assert.match(
-  header(unauthenticated.response.headers, "cache-control") ?? "",
+  header(gateway.response.headers, "cache-control") ?? "",
   /no-store/i,
 );
+assert.match(
+  header(gateway.response.headers, "content-security-policy") ?? "",
+  /connect-src 'self' https:\/\/canary-camera\.example\.ts\.net/,
+);
+assert.doesNotMatch(
+  header(gateway.response.headers, "content-security-policy") ?? "",
+  /connect-src \*/,
+);
+
+const unauthenticatedSetup = await read("/setup");
+assert.equal(unauthenticatedSetup.response.status, 200);
+assert.doesNotMatch(unauthenticatedSetup.text, new RegExp(shareCanary));
+assert.doesNotMatch(unauthenticatedSetup.text, new RegExp(cameraCanary));
+assert.match(unauthenticatedSetup.text, /Home Camera Access/);
+assert.match(unauthenticatedSetup.text, /Private authorised access only/);
+assert.doesNotMatch(unauthenticatedSetup.text, /Install Tailscale/);
+assert.doesNotMatch(unauthenticatedSetup.text, /Install Tailscale for Camera Access/);
+assert.match(
+  header(unauthenticatedSetup.response.headers, "cache-control") ?? "",
+  /no-store/i,
+);
+
+const portalHealth = await read("/healthz");
+assert.notEqual(portalHealth.response.status, 200);
+assert.doesNotMatch(portalHealth.text, new RegExp(shareCanary));
 
 const installer = await read("/Install-CCTV-Tailscale.ps1");
 assert.equal(installer.response.status, 200);
@@ -59,7 +84,7 @@ assert.doesNotMatch(installer.text, new RegExp(shareCanary));
 assert.doesNotMatch(installer.text, new RegExp(cameraCanary));
 assert.doesNotMatch(installer.text, new RegExp(password));
 assert.match(
-  header(unauthenticated.response.headers, "content-security-policy") ?? "",
+  header(gateway.response.headers, "content-security-policy") ?? "",
   /frame-ancestors 'none'/,
 );
 
@@ -149,7 +174,16 @@ assert.equal(attrs.get("path"), "/");
 assert.ok(!/domain=/i.test(setCookie));
 
 const sessionCookie = setCookie.split(";", 1)[0];
-const authenticated = await read("/", {
+const authenticatedGateway = await read("/", {
+  headers: { cookie: sessionCookie },
+});
+assert.equal(authenticatedGateway.response.status, 200);
+assert.match(authenticatedGateway.text, /Attempting to connect to your CCTV system/);
+assert.match(authenticatedGateway.text, new RegExp(cameraCanary));
+assert.doesNotMatch(authenticatedGateway.text, new RegExp(shareCanary));
+assert.doesNotMatch(authenticatedGateway.text, /Install Tailscale/);
+
+const authenticated = await read("/setup", {
   headers: { cookie: sessionCookie },
 });
 assert.equal(authenticated.response.status, 200);
@@ -224,8 +258,10 @@ const cleared = logout.response.headers.get("set-cookie") ?? "";
 assert.match(cleared, /hp_session=/);
 assert.match(cleared, /max-age=0/i);
 
-const locked = await read("/");
+const locked = await read("/setup");
+assert.match(locked.text, /Private authorised access only/);
 assert.doesNotMatch(locked.text, new RegExp(shareCanary));
 assert.doesNotMatch(locked.text, new RegExp(cameraCanary));
+assert.doesNotMatch(locked.text, /Install Tailscale/);
 
 console.log("live verification passed");
