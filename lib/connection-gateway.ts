@@ -1,13 +1,14 @@
-import { getCameraHealthUrl } from "./camera-url";
+import {
+  createCameraHealthProbe,
+  type CameraHealthProbe,
+} from "./camera-health";
 
-export const HEALTH_TIMEOUT_MS = 4500;
+export {
+  HEALTH_FETCH_OPTIONS,
+  HEALTH_TIMEOUT_MS,
+} from "./camera-health";
+
 export const COUNTDOWN_SECONDS = 5;
-
-export const HEALTH_FETCH_OPTIONS = {
-  method: "GET",
-  cache: "no-store",
-  credentials: "omit",
-} as const;
 
 export type GatewayStatus = "checking" | "connected" | "failed" | "cancelled";
 
@@ -30,10 +31,9 @@ const INITIAL_SNAPSHOT: GatewaySnapshot = {
 let snapshot: GatewaySnapshot = { ...INITIAL_SNAPSHOT };
 const listeners = new Set<() => void>();
 let startedFor: string | null = null;
-let controller: AbortController | null = null;
-let timeoutId: ReturnType<typeof setTimeout> | null = null;
 let countdownId: ReturnType<typeof setInterval> | null = null;
 let navigated = false;
+let activeProbe: CameraHealthProbe | null = null;
 
 function emit(next: GatewaySnapshot) {
   snapshot = next;
@@ -42,11 +42,7 @@ function emit(next: GatewaySnapshot) {
   }
 }
 
-function clearTimers() {
-  if (timeoutId !== null) {
-    clearTimeout(timeoutId);
-    timeoutId = null;
-  }
+function clearCountdown() {
   if (countdownId !== null) {
     clearInterval(countdownId);
     countdownId = null;
@@ -92,63 +88,37 @@ export function startGatewayCheck(
     return;
   }
 
-  clearTimers();
-  controller?.abort();
+  clearCountdown();
+  activeProbe?.abort();
 
   startedFor = cameraUrl;
   navigated = false;
-  controller = new AbortController();
   emit({ status: "checking", secondsLeft: COUNTDOWN_SECONDS });
 
-  const healthUrl = getCameraHealthUrl(cameraUrl);
-  if (!healthUrl) {
-    emit({ status: "failed", secondsLeft: 0 });
-    return;
-  }
+  const probe = createCameraHealthProbe(cameraUrl, {
+    timeoutMs: options.timeoutMs,
+    fetchImpl: options.fetchImpl,
+  });
+  activeProbe = probe;
 
-  const timeoutMs = options.timeoutMs ?? HEALTH_TIMEOUT_MS;
-  const intervalMs = options.intervalMs ?? 1000;
-  const fetchImpl = options.fetchImpl ?? fetch;
-
-  timeoutId = setTimeout(() => {
-    timeoutId = null;
-    controller?.abort();
-    if (startedFor === cameraUrl && snapshot.status === "checking") {
-      emit({ status: "failed", secondsLeft: 0 });
+  void probe.promise.then((result) => {
+    if (startedFor !== cameraUrl || snapshot.status !== "checking") {
+      return;
     }
-  }, timeoutMs);
 
-  void fetchImpl(healthUrl, {
-    ...HEALTH_FETCH_OPTIONS,
-    signal: controller.signal,
-  })
-    .then((response) => {
-      if (startedFor !== cameraUrl || snapshot.status !== "checking") {
-        return;
-      }
+    if (result === "ok") {
+      beginCountdown(cameraUrl, options.intervalMs ?? 1000);
+      return;
+    }
 
-      clearTimers();
-      if (response.ok) {
-        beginCountdown(cameraUrl, intervalMs);
-        return;
-      }
-
-      emit({ status: "failed", secondsLeft: 0 });
-    })
-    .catch(() => {
-      if (startedFor !== cameraUrl || snapshot.status !== "checking") {
-        return;
-      }
-
-      clearTimers();
-      emit({ status: "failed", secondsLeft: 0 });
-    });
+    emit({ status: "failed", secondsLeft: 0 });
+  });
 }
 
 export function cancelGatewayCheck(): void {
-  clearTimers();
-  controller?.abort();
-  controller = null;
+  clearCountdown();
+  activeProbe?.abort();
+  activeProbe = null;
   emit({
     status: "cancelled",
     secondsLeft: snapshot.secondsLeft,
@@ -174,9 +144,9 @@ export function takeNavigationTarget(cameraUrl: string): string | null {
 }
 
 export function resetGatewayStateForTests(): void {
-  clearTimers();
-  controller?.abort();
-  controller = null;
+  clearCountdown();
+  activeProbe?.abort();
+  activeProbe = null;
   startedFor = null;
   navigated = false;
   snapshot = { ...INITIAL_SNAPSHOT };

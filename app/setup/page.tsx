@@ -2,7 +2,7 @@ import { connection } from "next/server";
 import { PasswordGate } from "@/components/password-gate";
 import { SetupFlow } from "@/components/setup-flow";
 import { hasValidSession } from "@/lib/auth";
-import { getCapabilityUrls } from "@/lib/env";
+import { getCameraUrl } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -14,8 +14,8 @@ export default async function SetupPage() {
     return <PasswordGate />;
   }
 
-  const urls = getCapabilityUrls();
-  if (!urls) {
+  const cameraUrl = getCameraUrl();
+  if (!cameraUrl) {
     return (
       <main className="mx-auto flex min-h-[100dvh] w-full max-w-lg flex-col justify-center px-[max(1rem,env(safe-area-inset-left))] py-[max(1.5rem,env(safe-area-inset-bottom))] pr-[max(1rem,env(safe-area-inset-right))]">
         <h1 className="text-2xl font-semibold tracking-tight">Home Camera Access</h1>
@@ -24,5 +24,5 @@ export default async function SetupPage() {
     );
   }
 
-  return <SetupFlow cameraUrl={urls.cameraUrl} shareUrl={urls.shareUrl} />;
+  return <SetupFlow cameraUrl={cameraUrl} />;
 }

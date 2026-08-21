@@ -8,4 +8,5 @@ export const MIN_SESSION_SECRET_BYTES = 32;
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 export const LOGIN_MAX_ATTEMPTS = 5;
 export const RATE_LIMIT_MAX_KEYS = 2000;
-export const PROGRESS_STORAGE_KEY = "homepictures.setup.v1";
+export const PROGRESS_STORAGE_KEY = "homepictures.setup.v2";
+export const PROGRESS_VERSION = 2;

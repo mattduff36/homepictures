@@ -24,6 +24,9 @@ const SECRET_MARKERS = [
   "SETUP_PASSWORD",
   "SESSION_SECRET",
   "TAILSCALE_SHARE_URL",
+  "TAILSCALE_SHARED_LOGIN_EMAIL",
+  "TAILSCALE_SHARED_LOGIN_PASSWORD",
+  "TAILSCALE_AUTHKEY",
   "CAMERA_URL",
   "TS_AUTHKEY",
   "TS_LOGINURL",
@@ -72,7 +75,7 @@ test("the public installer leaves existing Tailscale installs and managed polici
   assert.match(installer, /left your existing Tailscale installation untouched/);
   assert.match(installer, /function Get-ManagedPolicyInspection/);
   assert.match(installer, /will not overwrite a managed configuration/);
-  assert.match(installer, /Connect Camera Access/);
+  assert.match(installer, /Return to the Camera Access setup wizard and continue with sign in/);
   assert.match(installer, /function Test-IsTailscaleUninstallDisplayName/);
   assert.match(installer, /PSObject\.Properties\['DisplayName'\]/);
 });

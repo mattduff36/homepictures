@@ -51,3 +51,20 @@ export function isAllowedOrigin(
     return false;
   }
 }
+
+export function isAllowedSameOriginRead(
+  request: Request,
+  isProduction = process.env.NODE_ENV === "production",
+): boolean {
+  const originHeader = request.headers.get("origin");
+  if (originHeader) {
+    return isAllowedOrigin(request, isProduction);
+  }
+
+  const site = (request.headers.get("sec-fetch-site") ?? "").toLowerCase();
+  if (site && site !== "same-origin" && site !== "same-site" && site !== "none") {
+    return false;
+  }
+
+  return getExpectedOrigin(request) !== null;
+}

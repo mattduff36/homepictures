@@ -16,8 +16,8 @@
   On a fresh PC it downloads the current stable installer from
   https://pkgs.tailscale.com/stable/, verifies the SHA-256 checksum and a
   valid Tailscale Authenticode signature, writes camera-safe machine
-  policies, then installs Tailscale. Sign-in stays the official Tailscale
-  browser login. No auth key is used.
+  policies, then installs Tailscale. Sign-in stays on the Camera Access
+  setup wizard. No auth key is used.
 
 .NOTES
   Public, auditable script. Safe to read before running.
@@ -226,7 +226,7 @@ function Show-ExistingInstallMessage {
     Write-Info "No settings, registry policies, exit nodes, DNS, subnets, or login state were changed."
     Write-Info "Tailscale was not reinstalled and was not signed out."
     Write-Host ""
-    Write-Info "Return to the Camera Access page and continue with Connect Camera Access."
+    Write-Info "Return to the Camera Access setup wizard and continue with sign in."
 }
 
 function Get-ManagedPolicyInspection {
@@ -251,7 +251,7 @@ function Show-UnreadablePolicyMessage {
     Write-Info "HomePictures will not request administrator permission or change settings."
     Write-Info "Nothing was installed and no settings were changed."
     Write-Host ""
-    Write-Info "Return to the Camera Access page and continue with Connect Camera Access."
+    Write-Info "Return to the Camera Access setup wizard and continue with sign in."
 }
 
 function Test-NotReparsePoint {
@@ -542,7 +542,7 @@ function Show-ManagedPolicyMessage {
     Write-Info "Nothing was installed and no settings were changed."
     Write-Host ""
     Write-Info "If this is a work or school PC, keep using that Tailscale installation."
-    Write-Info "Return to the Camera Access page and continue with Connect Camera Access."
+    Write-Info "Return to the Camera Access setup wizard and continue with sign in."
 }
 
 function Restart-Elevated {
@@ -634,12 +634,12 @@ function Get-StableInstallerTarget {
     Save-OfficialPackage -Uri ([uri]$OfficialPackageRoot) -Destination $indexPath
     $html = Get-Content -LiteralPath $indexPath -Raw -Encoding UTF8
 
-    $matches = [regex]::Matches($html, 'tailscale-setup-(\d+\.\d+\.\d+)\.exe')
-    if ($matches.Count -eq 0) {
+    $installerMatches = [regex]::Matches($html, 'tailscale-setup-(\d+\.\d+\.\d+)\.exe')
+    if ($installerMatches.Count -eq 0) {
         throw "Could not determine the current stable Tailscale version from https://pkgs.tailscale.com/stable/."
     }
 
-    $versions = $matches | ForEach-Object { [version]$_.Groups[1].Value } | Sort-Object -Unique
+    $versions = $installerMatches | ForEach-Object { [version]$_.Groups[1].Value } | Sort-Object -Unique
     $version = $versions[-1].ToString()
 
     $native = Get-NativeProcessorArchitecture
@@ -1082,7 +1082,7 @@ function Remove-TempDirectory {
 function Show-SuccessMessage {
     Write-Host ""
     Write-Ok "Tailscale is installed with camera-safe network settings."
-    Write-Info "Sign in using your own Tailscale account, then return to the Camera Access page."
+    Write-Info "Return to the Camera Access setup wizard and sign in with the Camera Access account."
     Write-Host ""
     Write-Info "To undo only the camera-specific policies later, run:"
     Write-Info "  $RestorePath"

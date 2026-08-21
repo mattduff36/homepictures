@@ -83,8 +83,9 @@ test("setup flow uses the public installer download and Windows options", () => 
   assert.match(source, /download=\{WINDOWS_INSTALLER_FILENAME\}/);
   assert.match(source, /WINDOWS_PRIMARY_ACTION/);
   assert.match(source, /WINDOWS_SECONDARY_ACTION/);
-  assert.match(source, /OTHER_PLATFORM_ORDER/);
+  assert.match(source, /TAILSCALE_DOWNLOADS\[platform\]/);
   assert.doesNotMatch(source, /tailscale\.com\/download\/windows/);
+  assert.doesNotMatch(source, /OTHER_PLATFORM_ORDER/);
 });
 
 test("other platforms keep official Tailscale install routes", () => {

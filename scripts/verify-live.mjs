@@ -79,6 +79,8 @@ assert.match(installer.text, /UseTailscaleDNSSettings/);
 assert.doesNotMatch(installer.text, /SETUP_PASSWORD/);
 assert.doesNotMatch(installer.text, /SESSION_SECRET/);
 assert.doesNotMatch(installer.text, /TAILSCALE_SHARE_URL/);
+assert.doesNotMatch(installer.text, /TAILSCALE_SHARED_LOGIN/);
+assert.doesNotMatch(installer.text, /TAILSCALE_AUTHKEY/);
 assert.doesNotMatch(installer.text, /CAMERA_URL/);
 assert.doesNotMatch(installer.text, new RegExp(shareCanary));
 assert.doesNotMatch(installer.text, new RegExp(cameraCanary));
@@ -187,11 +189,12 @@ const authenticated = await read("/setup", {
   headers: { cookie: sessionCookie },
 });
 assert.equal(authenticated.response.status, 200);
-assert.match(authenticated.text, new RegExp(shareCanary));
+assert.doesNotMatch(authenticated.text, new RegExp(shareCanary));
+assert.doesNotMatch(authenticated.text, /TAILSCALE_AUTHKEY/);
+assert.doesNotMatch(authenticated.text, /tskey-/);
 assert.match(authenticated.text, new RegExp(cameraCanary));
 assert.match(authenticated.text, /Install Tailscale/);
-assert.match(authenticated.text, /Install Tailscale for Camera Access/);
-assert.match(authenticated.text, /I already have Tailscale/);
+assert.match(authenticated.text, /Step 1 of 5/);
 assert.match(
   header(authenticated.response.headers, "cache-control") ?? "",
   /private/i,
@@ -200,6 +203,53 @@ assert.match(
   header(authenticated.response.headers, "cache-control") ?? "",
   /no-store/i,
 );
+
+const credentialsDenied = await read("/api/setup/credentials");
+assert.ok(
+  credentialsDenied.response.status === 401 ||
+    credentialsDenied.response.status === 403,
+);
+assert.match(
+  header(credentialsDenied.response.headers, "cache-control") ?? "",
+  /no-store/i,
+);
+assert.doesNotMatch(credentialsDenied.text, new RegExp(shareCanary));
+assert.doesNotMatch(credentialsDenied.text, /tskey-/);
+
+const credentials = await read("/api/setup/credentials", {
+  headers: { cookie: sessionCookie, origin },
+});
+assert.ok(credentials.response.status === 200 || credentials.response.status === 503);
+assert.match(
+  header(credentials.response.headers, "cache-control") ?? "",
+  /no-store/i,
+);
+if (credentials.response.status === 200) {
+  assert.match(credentials.text, /"email"/);
+  assert.match(credentials.text, /"password"/);
+  assert.match(credentials.text, /"provider"/);
+  assert.doesNotMatch(authenticated.text, JSON.parse(credentials.text).password);
+}
+
+const helperDenied = await read("/api/setup/windows-signin");
+assert.ok(helperDenied.response.status === 401 || helperDenied.response.status === 403);
+assert.doesNotMatch(helperDenied.text, /tskey-/);
+
+const helper = await read("/api/setup/windows-signin", {
+  headers: { cookie: sessionCookie, origin },
+});
+assert.ok(helper.response.status === 200 || helper.response.status === 503);
+assert.match(
+  header(helper.response.headers, "cache-control") ?? "",
+  /no-store/i,
+);
+if (helper.response.status === 200) {
+  assert.match(
+    header(helper.response.headers, "content-disposition") ?? "",
+    /Complete-CCTV-Tailscale-Signin\.ps1/,
+  );
+  assert.doesNotMatch(authenticated.text, /tskey-/);
+}
 
 const logoutMissingOrigin = await read("/api/logout", {
   method: "POST",

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { getExpectedOrigin, isAllowedOrigin } from "./origin";
+import {
+  getExpectedOrigin,
+  isAllowedOrigin,
+  isAllowedSameOriginRead,
+} from "./origin";
 
 function makeRequest(headers: Record<string, string>) {
   return new Request("https://example.test/api/login", { headers });
@@ -55,4 +59,34 @@ test("rejects a malformed origin", () => {
     origin: "not a url",
   });
   assert.equal(isAllowedOrigin(request, true), false);
+});
+
+test("same-origin GET reads may omit Origin in production", () => {
+  const sameOrigin = makeRequest({
+    host: "cameras.example",
+    "x-forwarded-proto": "https",
+    "sec-fetch-site": "same-origin",
+  });
+  assert.equal(isAllowedSameOriginRead(sameOrigin, true), true);
+  assert.equal(isAllowedOrigin(sameOrigin, true), false);
+
+  const omittedSite = makeRequest({
+    host: "cameras.example",
+    "x-forwarded-proto": "https",
+  });
+  assert.equal(isAllowedSameOriginRead(omittedSite, true), true);
+
+  const crossSite = makeRequest({
+    host: "cameras.example",
+    "x-forwarded-proto": "https",
+    "sec-fetch-site": "cross-site",
+  });
+  assert.equal(isAllowedSameOriginRead(crossSite, true), false);
+
+  const evil = makeRequest({
+    host: "cameras.example",
+    "x-forwarded-proto": "https",
+    origin: "https://evil.example",
+  });
+  assert.equal(isAllowedSameOriginRead(evil, true), false);
 });

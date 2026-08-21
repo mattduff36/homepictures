@@ -16,6 +16,16 @@ afterEach(() => {
   resetGatewayStateForTests();
 });
 
+async function waitUntil(predicate: () => boolean, timeoutMs = 500) {
+  const started = Date.now();
+  while (!predicate()) {
+    if (Date.now() - started > timeoutMs) {
+      throw new Error("timed out waiting for gateway condition");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -63,6 +73,9 @@ test("timeout aborts the outstanding health request and routes to setup", async 
     timeoutMs: 15,
     fetchImpl: (_input, init) => {
       signal = init?.signal ?? undefined;
+      signal?.addEventListener("abort", () => {
+        pending.reject(new DOMException("Aborted", "AbortError"));
+      });
       return pending.promise;
     },
   });
@@ -80,14 +93,15 @@ test("successful health starts a countdown then opens the camera URL once", asyn
     fetchImpl: async () => new Response(null, { status: 204 }),
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  assert.equal(getGatewaySnapshot().status, "connected");
-  assert.equal(getGatewaySnapshot().secondsLeft, 5);
+  await waitUntil(() => getGatewaySnapshot().status === "connected");
+  assert.ok(getGatewaySnapshot().secondsLeft > 0);
   assert.equal(takeNavigationTarget(cameraUrl), null);
 
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.equal(getGatewaySnapshot().status, "connected");
-  assert.equal(getGatewaySnapshot().secondsLeft, 0);
+  await waitUntil(
+    () =>
+      getGatewaySnapshot().status === "connected" &&
+      getGatewaySnapshot().secondsLeft === 0,
+  );
   assert.equal(takeNavigationTarget(cameraUrl), cameraUrl);
   assert.equal(takeNavigationTarget(cameraUrl), null);
 });

@@ -14,12 +14,15 @@ test("root is the connection gateway and setup stays password-protected", () => 
   assert.match(home, /redirect\("\/setup"\)/);
   assert.doesNotMatch(home, /PasswordGate/);
   assert.doesNotMatch(home, /getCapabilityUrls/);
+  assert.doesNotMatch(home, /getSharedLogin/);
   assert.doesNotMatch(home, /TAILSCALE_SHARE_URL/);
+  assert.doesNotMatch(home, /TAILSCALE_AUTHKEY/);
 
   assert.match(setup, /hasValidSession/);
   assert.match(setup, /PasswordGate/);
   assert.match(setup, /SetupFlow/);
-  assert.match(setup, /getCapabilityUrls/);
+  assert.match(setup, /getCameraUrl/);
+  assert.doesNotMatch(setup, /getCapabilityUrls/);
 });
 
 test("login and lock return to /setup and Open Cameras still assigns CAMERA_URL", () => {
