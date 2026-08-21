@@ -17,7 +17,7 @@ export default async function SetupPage() {
   const cameraUrl = getCameraUrl();
   if (!cameraUrl) {
     return (
-      <main className="mx-auto flex min-h-[100dvh] w-full max-w-lg flex-col justify-center px-[max(1rem,env(safe-area-inset-left))] py-[max(1.5rem,env(safe-area-inset-bottom))] pr-[max(1rem,env(safe-area-inset-right))]">
+      <main className="page-shell mx-auto flex min-h-[100dvh] w-full max-w-3xl flex-col justify-center px-[max(1rem,env(safe-area-inset-left))] py-[max(1.5rem,env(safe-area-inset-bottom))] pr-[max(1rem,env(safe-area-inset-right))]">
         <h1 className="text-2xl font-semibold tracking-tight">Home Camera Access</h1>
         <p className="mt-3 text-mute">Setup is temporarily unavailable.</p>
       </main>

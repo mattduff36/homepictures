@@ -98,15 +98,27 @@ export function serializeSetupProgress(progress: SetupProgress): string {
 }
 
 export function readSetupProgress(): SetupProgress {
-  return parseSetupProgress(localStorage.getItem(PROGRESS_STORAGE_KEY));
+  try {
+    return parseSetupProgress(localStorage.getItem(PROGRESS_STORAGE_KEY));
+  } catch {
+    return DEFAULT_SETUP_PROGRESS;
+  }
 }
 
 export function writeSetupProgress(progress: SetupProgress) {
-  localStorage.setItem(PROGRESS_STORAGE_KEY, serializeSetupProgress(progress));
+  try {
+    localStorage.setItem(PROGRESS_STORAGE_KEY, serializeSetupProgress(progress));
+  } catch {
+    return;
+  }
 }
 
 export function clearSetupProgress() {
-  localStorage.removeItem(PROGRESS_STORAGE_KEY);
+  try {
+    localStorage.removeItem(PROGRESS_STORAGE_KEY);
+  } catch {
+    return;
+  }
 }
 
 export function nextStage(stage: SetupStage): SetupStage {

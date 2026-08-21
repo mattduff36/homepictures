@@ -4,9 +4,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { SETUP_STAGE_TITLES } from "./setup-copy";
 import {
+  applyDetectedAccess,
   applyWindowsReturnFlag,
   canContinueVerify,
   completeSetupStage,
+  parseStepParam,
+  resolveLandingProgress,
+  setupStepSearch,
   wizardViewFor,
 } from "./setup-flow-state";
 import { DEFAULT_SETUP_PROGRESS, type SetupProgress } from "./setup-progress";
@@ -98,14 +102,73 @@ test("WIZARD-FLOW-01: every platform has five stages and verify does not auto-ad
 
   assert.match(flow, /wizardViewFor\(platform, stage, probe\)/);
   assert.match(flow, /completeSetupStage\(progress, probe\)/);
-  assert.match(flow, /applyWindowsReturnFlag\(stored, flag\)/);
+  assert.match(flow, /resolveLandingProgress\(stored,/);
+  assert.match(flow, /applyDetectedAccess\(current, "ok"\)/);
+  assert.match(flow, /setupStepSearch/);
   assert.match(flow, /canContinueVerify\(probe\)/);
   assert.match(flow, /Camera system isn&apos;t reachable yet/);
   assert.match(flow, /does not mean\s+your password or Tailscale sign-in is wrong/);
   assert.match(flow, /Do not use your own \{providerLabel\} account/);
   assert.match(flow, /Open MPDEE Vision/);
+  assert.match(flow, /data-setup-cta="primary"/);
+  assert.match(flow, /setup-sticky-cta/);
+  assert.match(flow, /setup-rail/);
+  assert.match(flow, /page-shell/);
+  assert.doesNotMatch(flow, /max-w-2xl/);
   assert.doesNotMatch(flow, /Camera access was not detected/);
   assert.doesNotMatch(flow, /if \(result === "ok"\) \{\s*completeCurrentStage/);
   assert.doesNotMatch(flow, /Connect Camera Access/);
   assert.doesNotMatch(flow, /shareUrl/);
+});
+
+test("WIZARD-RESUME-01: visiting setup restores the saved step and can detect existing access", () => {
+  const midSignIn: SetupProgress = {
+    ...DEFAULT_SETUP_PROGRESS,
+    currentStage: 2,
+    completedUpTo: 1,
+    platformOverride: "windows",
+  };
+
+  assert.equal(parseStepParam("3"), 3);
+  assert.equal(parseStepParam("9"), null);
+  assert.equal(parseStepParam("step"), null);
+
+  assert.deepEqual(
+    resolveLandingProgress(midSignIn, { stepParam: null, windowsFlag: null }),
+    midSignIn,
+  );
+  assert.equal(
+    resolveLandingProgress(DEFAULT_SETUP_PROGRESS, {
+      stepParam: null,
+      windowsFlag: "installed",
+    }).currentStage,
+    2,
+  );
+  assert.equal(
+    resolveLandingProgress(midSignIn, { stepParam: "4", windowsFlag: null }).currentStage,
+    4,
+  );
+  assert.equal(
+    resolveLandingProgress(midSignIn, {
+      stepParam: "1",
+      windowsFlag: "signedin",
+    }).currentStage,
+    1,
+  );
+
+  assert.equal(applyDetectedAccess(DEFAULT_SETUP_PROGRESS, "ok").currentStage, 4);
+  assert.equal(applyDetectedAccess(DEFAULT_SETUP_PROGRESS, "ok").completedUpTo, 3);
+  assert.equal(applyDetectedAccess(midSignIn, "failed").currentStage, 2);
+  assert.equal(applyDetectedAccess(stage3, "ok").currentStage, 3);
+  assert.equal(
+    applyDetectedAccess({ ...DEFAULT_SETUP_PROGRESS, currentStage: 4, completedUpTo: 3 }, "ok")
+      .currentStage,
+    4,
+  );
+
+  assert.equal(setupStepSearch(new URLSearchParams(), 3), "?step=3");
+  assert.equal(
+    setupStepSearch(new URLSearchParams("windows=installed&step=1"), 2),
+    "?step=2",
+  );
 });

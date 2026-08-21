@@ -35,6 +35,32 @@
 html {
   background: var(--canvas);
   color: var(--ink);
+  overflow-x: clip;
+}
+
+.page-shell {
+  width: 100%;
+  max-width: 90rem;
+  margin-inline: auto;
+}
+
+.setup-rail {
+  position: sticky;
+  top: 1.25rem;
+}
+
+@media (max-width: 1023px) {
+  .setup-sticky-cta {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 30;
+    border-top: 1px solid var(--line);
+    background: color-mix(in srgb, var(--canvas) 94%, transparent);
+    padding: 0.75rem max(0.75rem, env(safe-area-inset-right))
+      max(0.75rem, env(safe-area-inset-bottom))
+      max(0.75rem, env(safe-area-inset-left));
+  }
 }
 
 body {

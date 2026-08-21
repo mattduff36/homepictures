@@ -16,9 +16,12 @@ import { createCameraHealthProbe } from "@/lib/camera-health";
 import type { CameraHealthResult } from "@/lib/camera-health";
 import { SETUP_STAGE_TITLES } from "@/lib/setup-copy";
 import {
-  applyWindowsReturnFlag,
+  applyDetectedAccess,
   canContinueVerify,
   completeSetupStage,
+  parseStepParam,
+  resolveLandingProgress,
+  setupStepSearch,
   wizardViewFor,
   type WizardView,
 } from "@/lib/setup-flow-state";
@@ -55,6 +58,16 @@ const PLATFORM_LABELS: Record<PlatformId, string> = {
   linux: "Linux",
 };
 
+const PAGE_GUTTER =
+  "px-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))]";
+
+type PrimaryAction = {
+  label: string;
+  onClick: () => void;
+  disabled: boolean;
+  hint: string;
+};
+
 function Disclosure({
   title,
   children,
@@ -72,6 +85,97 @@ function Disclosure({
         {children}
       </div>
     </details>
+  );
+}
+
+function StageProgress({
+  stage,
+  completedUpTo,
+}: {
+  stage: SetupStage;
+  completedUpTo: SetupProgress["completedUpTo"];
+}) {
+  return (
+    <>
+      <p className="text-sm text-mute">
+        Step {stage} of {SETUP_STAGE_COUNT}
+      </p>
+      <ol className="mt-3 flex gap-2" aria-hidden="true">
+        {SETUP_STAGE_TITLES.map((label, index) => {
+          const number = (index + 1) as SetupStage;
+          const complete = completedUpTo >= number;
+          const current = stage === number;
+          return (
+            <li
+              key={label}
+              className={`h-1.5 flex-1 rounded-full ${
+                complete || current ? "bg-secure" : "bg-line"
+              }`}
+            />
+          );
+        })}
+      </ol>
+    </>
+  );
+}
+
+function DeviceSelect({
+  detected,
+  platform,
+  onChange,
+}: {
+  detected: PlatformId | null;
+  platform: PlatformId | null;
+  onChange: (value: PlatformId | null) => void;
+}) {
+  return (
+    <label className="block text-sm text-mute">
+      This device
+      <select
+        className="field mt-2"
+        value={platform ?? ""}
+        onChange={(event) => {
+          const value = event.target.value;
+          onChange(value ? (value as PlatformId) : null);
+        }}
+      >
+        {detected ? (
+          <option value="">
+            Detected: {PLATFORM_LABELS[detected]}
+          </option>
+        ) : (
+          <option value="">Choose a platform</option>
+        )}
+        {(Object.keys(PLATFORM_LABELS) as PlatformId[]).map((id) => (
+          <option key={id} value={id}>
+            {PLATFORM_LABELS[id]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function PrimaryCta({
+  action,
+  className,
+}: {
+  action: PrimaryAction;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <button
+        type="button"
+        className="btn btn-primary w-full"
+        data-setup-cta="primary"
+        onClick={action.onClick}
+        disabled={action.disabled}
+      >
+        {action.label}
+      </button>
+      <p className="mt-2 text-sm text-mute">{action.hint}</p>
+    </div>
   );
 }
 
@@ -107,28 +211,23 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
   const [helperBusy, setHelperBusy] = useState(false);
   const [probe, setProbe] = useState<CameraHealthResult | "checking">("checking");
   const [probeAttempt, setProbeAttempt] = useState(0);
+  const [honorExplicitStep, setHonorExplicitStep] = useState(false);
 
   const detected = isClient ? detectPlatform() : null;
   const platform = progress.platformOverride ?? detected;
 
   if (isClient && !storageLoaded) {
+    const params = new URLSearchParams(window.location.search);
     const stored = readSetupProgress();
-    const flag = new URLSearchParams(window.location.search).get("windows");
-    const next = applyWindowsReturnFlag(stored, flag);
+    setHonorExplicitStep(parseStepParam(params.get("step")) !== null);
+    const next = resolveLandingProgress(stored, {
+      stepParam: params.get("step"),
+      windowsFlag: params.get("windows"),
+    });
     setStorageLoaded(true);
     setProgress(next);
     if (next !== stored) {
       writeSetupProgress(next);
-    }
-    if (flag) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("windows");
-      const search = url.searchParams.toString();
-      window.history.replaceState(
-        {},
-        "",
-        `${url.pathname}${search ? `?${search}` : ""}${url.hash}`,
-      );
     }
     if (next.currentStage === 2) {
       setCredentialsLoading(true);
@@ -195,6 +294,7 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
   }
 
   function resetProgress() {
+    setHonorExplicitStep(true);
     setProgress(DEFAULT_SETUP_PROGRESS);
     clearSetupProgress();
     setProbe("checking");
@@ -260,6 +360,22 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
   }, [progress.currentStage]);
 
   useEffect(() => {
+    if (!isClient || !storageLoaded) {
+      return;
+    }
+
+    const search = setupStepSearch(
+      new URLSearchParams(window.location.search),
+      progress.currentStage,
+    );
+    const nextUrl = `${window.location.pathname}${search}${window.location.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState({}, "", nextUrl);
+    }
+  }, [isClient, progress.currentStage, storageLoaded]);
+
+  useEffect(() => {
     if (progress.currentStage !== 3) {
       return;
     }
@@ -278,6 +394,35 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
       active.abort();
     };
   }, [cameraUrl, progress.currentStage, probeAttempt]);
+
+  useEffect(() => {
+    if (!storageLoaded || honorExplicitStep || progress.currentStage >= 3) {
+      return;
+    }
+
+    let cancelled = false;
+    const active = createCameraHealthProbe(cameraUrl);
+
+    void active.promise.then((result) => {
+      if (cancelled || result !== "ok") {
+        return;
+      }
+
+      setProgress((current) => {
+        const detected = applyDetectedAccess(current, "ok");
+        if (detected === current) {
+          return current;
+        }
+        writeSetupProgress(detected);
+        return detected;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      active.abort();
+    };
+  }, [cameraUrl, honorExplicitStep, progress.currentStage, storageLoaded]);
 
   async function downloadWindowsHelper() {
     setHelperBusy(true);
@@ -315,16 +460,66 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
   const stage = progress.currentStage;
   const view = wizardViewFor(platform, stage, probe);
   const title = view.title;
+  const primaryAction: PrimaryAction =
+    stage === 1
+      ? {
+          label: "Installed",
+          onClick: completeCurrentStage,
+          disabled: !platform,
+          hint: platform
+            ? "Press this after Tailscale is installed."
+            : "Choose this device first.",
+        }
+      : stage === 2
+        ? {
+            label: "I have signed in",
+            onClick: completeCurrentStage,
+            disabled: !credentials,
+            hint: credentials
+              ? "Press this after Tailscale shows you are signed in."
+              : "Sign-in details are still loading.",
+          }
+        : stage === 3
+          ? {
+              label: "Continue",
+              onClick: completeCurrentStage,
+              disabled: !canContinueVerify(probe),
+              hint:
+                probe === "ok"
+                  ? "Camera access is ready on this device."
+                  : "This unlocks when camera access is detected.",
+            }
+          : {
+              label: "Open MPDEE Vision",
+              onClick: openCameras,
+              disabled: false,
+              hint: "Opens the private camera page.",
+            };
+
+  function goBack() {
+    const previous = (stage - 1) as SetupStage;
+    if (previous === 2) {
+      setCredentials(null);
+      setCredentialsError(null);
+      setCredentialsLoading(true);
+    }
+    if (previous === 3) {
+      setProbe("checking");
+    }
+    update({ currentStage: previous });
+  }
 
   return (
-    <div className="min-h-[100dvh] pb-[max(6rem,calc(env(safe-area-inset-bottom)+5.5rem))] md:pb-[max(2rem,env(safe-area-inset-bottom))]">
+    <div className="min-h-[100dvh] pb-[max(7rem,calc(env(safe-area-inset-bottom)+6rem))] lg:pb-[max(2rem,env(safe-area-inset-bottom))]">
       <header className="border-b border-line">
-        <div className="mx-auto flex w-full max-w-2xl flex-col items-start justify-between gap-4 px-[max(1.25rem,env(safe-area-inset-left))] pt-[max(1.25rem,env(safe-area-inset-top))] pr-[max(1.25rem,env(safe-area-inset-right))] pb-5 sm:flex-row">
-          <div>
-            <h1 className="text-[1.65rem] font-semibold tracking-tight">
+        <div
+          className={`page-shell flex flex-col items-start justify-between gap-4 ${PAGE_GUTTER} pt-[max(1.25rem,env(safe-area-inset-top))] pb-5 sm:flex-row sm:items-end`}
+        >
+          <div className="max-w-3xl">
+            <h1 className="text-[1.65rem] font-semibold tracking-tight lg:text-[1.85rem]">
               Home Camera Access
             </h1>
-            <p className="mt-2 max-w-prose text-mute">
+            <p className="mt-2 text-mute">
               Secure private access to the home camera system.
             </p>
             <p className="mt-3 inline-flex items-center gap-2 text-sm text-secure-soft">
@@ -344,236 +539,214 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
           </button>
         </div>
         {lockError ? (
-          <p className="mx-auto max-w-2xl px-5 pb-4 text-sm text-danger" role="alert">
+          <p className={`page-shell ${PAGE_GUTTER} pb-4 text-sm text-danger`} role="alert">
             {lockError}
           </p>
         ) : null}
       </header>
 
-      <main className="mx-auto w-full max-w-2xl px-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] pt-6">
-        <p className="text-sm text-mute">
-          Step {stage} of {SETUP_STAGE_COUNT}
-        </p>
-        <ol className="mt-3 flex gap-2" aria-hidden="true">
-          {SETUP_STAGE_TITLES.map((label, index) => {
-            const number = (index + 1) as SetupStage;
-            const complete = progress.completedUpTo >= number;
-            const current = stage === number;
-            return (
-              <li
-                key={label}
-                className={`h-1.5 flex-1 rounded-full ${
-                  complete || current ? "bg-secure" : "bg-line"
-                }`}
+      <main
+        className={`page-shell grid items-start gap-8 ${PAGE_GUTTER} pt-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-10 xl:grid-cols-[minmax(0,1fr)_22rem] xl:gap-14`}
+      >
+        <div className="min-w-0">
+          <div className="lg:hidden">
+            <StageProgress stage={stage} completedUpTo={progress.completedUpTo} />
+            <div className="mt-5">
+              <DeviceSelect
+                detected={detected}
+                platform={platform}
+                onChange={(value) => update({ platformOverride: value })}
               />
-            );
-          })}
-        </ol>
+            </div>
+            <p className="mt-2 text-sm text-mute">
+              Change this only if detection is wrong.
+            </p>
+          </div>
 
-        <label className="mt-5 block text-sm text-mute">
-          This device
-          <select
-            className="field mt-2"
-            value={platform ?? ""}
-            onChange={(event) => {
-              const value = event.target.value;
-              update({
-                platformOverride: value ? (value as PlatformId) : null,
-              });
-            }}
-          >
-            {detected ? (
-              <option value="">
-                Detected: {PLATFORM_LABELS[detected]}
-              </option>
-            ) : (
-              <option value="">Choose a platform</option>
-            )}
-            {(Object.keys(PLATFORM_LABELS) as PlatformId[]).map((id) => (
-              <option key={id} value={id}>
-                {PLATFORM_LABELS[id]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="mt-2 text-sm text-mute">
-          Change this only if detection is wrong.
-        </p>
-
-        <section className="panel mt-6 p-5 sm:p-6">
-          <div className="flex items-start gap-3">
-            <span className="step-index mt-0.5" data-complete={progress.completedUpTo >= stage}>
-              {progress.completedUpTo >= stage ? (
-                <Check size={14} weight="regular" aria-hidden="true" />
-              ) : (
-                stage
-              )}
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-semibold tracking-tight">
-                {stage}. {title}
-              </h2>
-              <div className="mt-3 space-y-4 text-[0.95rem] leading-relaxed text-mute">
-                {stage === 1 ? (
-                  <InstallStage
-                    platform={platform}
-                    view={view}
-                    onInstalled={completeCurrentStage}
-                  />
-                ) : null}
-                {stage === 2 ? (
-                  <SignInStage
-                    view={view}
-                    credentials={credentials}
-                    loading={credentialsLoading}
-                    error={credentialsError}
-                    passwordVisible={passwordVisible}
-                    copied={copied}
-                    helperBusy={helperBusy}
-                    helperError={helperError}
-                    onTogglePassword={() => setPasswordVisible((value) => !value)}
-                    onCopy={async (label, value) => {
-                      const ok = await copyText(value);
-                      if (ok) {
-                        setCopied(label);
-                      }
-                    }}
-                    onDownloadHelper={downloadWindowsHelper}
-                    onContinue={completeCurrentStage}
-                  />
-                ) : null}
-                {stage === 3 ? (
-                  <VerifyStage
-                    probe={probe}
-                    onRetry={() => {
-                      setProbe("checking");
-                      setProbeAttempt((value) => value + 1);
-                    }}
-                    onContinue={completeCurrentStage}
-                  />
-                ) : null}
-                {stage === 4 ? (
-                  <>
-                    <p>
-                      If the camera page does not open, make sure Tailscale shows
-                      Connected and try again.
-                    </p>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <button
-                        type="button"
-                        className="btn btn-primary min-w-44"
-                        onClick={openCameras}
-                      >
-                        Open MPDEE Vision
-                      </button>
+          <section className="panel mt-6 p-5 sm:p-6 lg:mt-0 lg:p-8">
+            <div className="flex items-start gap-3 lg:gap-4">
+              <span className="step-index mt-0.5" data-complete={progress.completedUpTo >= stage}>
+                {progress.completedUpTo >= stage ? (
+                  <Check size={14} weight="regular" aria-hidden="true" />
+                ) : (
+                  stage
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold tracking-tight lg:text-xl">
+                  {stage}. {title}
+                </h2>
+                <div className="mt-3 max-w-3xl space-y-4 text-[0.95rem] leading-relaxed text-mute lg:text-base">
+                  {stage === 1 ? (
+                    <InstallStage
+                      platform={platform}
+                      view={view}
+                      onInstalled={completeCurrentStage}
+                    />
+                  ) : null}
+                  {stage === 2 ? (
+                    <SignInStage
+                      view={view}
+                      credentials={credentials}
+                      loading={credentialsLoading}
+                      error={credentialsError}
+                      passwordVisible={passwordVisible}
+                      copied={copied}
+                      helperBusy={helperBusy}
+                      helperError={helperError}
+                      onTogglePassword={() => setPasswordVisible((value) => !value)}
+                      onCopy={async (label, value) => {
+                        const ok = await copyText(value);
+                        if (ok) {
+                          setCopied(label);
+                        }
+                      }}
+                      onDownloadHelper={downloadWindowsHelper}
+                    />
+                  ) : null}
+                  {stage === 3 ? (
+                    <VerifyStage
+                      probe={probe}
+                      onRetry={() => {
+                        setProbe("checking");
+                        setProbeAttempt((value) => value + 1);
+                      }}
+                    />
+                  ) : null}
+                  {stage === 4 ? (
+                    <>
+                      <p>
+                        If the camera page does not open, make sure Tailscale shows
+                        Connected and try again.
+                      </p>
                       <button
                         type="button"
                         className="btn btn-secondary min-w-32"
                         onClick={completeCurrentStage}
                       >
-                        Continue
+                        Continue to Home Screen
                       </button>
-                    </div>
-                  </>
-                ) : null}
-                {stage === 5 ? <HomeScreenStage view={view} /> : null}
+                    </>
+                  ) : null}
+                  {stage === 5 ? <HomeScreenStage view={view} /> : null}
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <div className="mt-4 flex flex-wrap gap-2">
           {stage > 1 ? (
+            <div className="mt-4 lg:hidden">
+              <button
+                type="button"
+                className="btn btn-ghost px-3 text-sm"
+                onClick={goBack}
+              >
+                Back
+              </button>
+            </div>
+          ) : null}
+
+          <section className="mt-6 space-y-2 lg:mt-8">
+            <Disclosure title="Troubleshooting">
+              <h3 className="font-medium text-ink">Camera page will not load</h3>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                <li>
+                  The camera box may be temporarily offline. Wait a minute and
+                  press Try again. That does not mean your password or Tailscale
+                  sign-in is wrong.
+                </li>
+                <li>Check Tailscale is installed and says Connected.</li>
+                <li>Confirm you signed in with the MPDEE Vision Camera Access account, not your own account.</li>
+                <li>Return here and press Try again, then Open MPDEE Vision.</li>
+                <li>
+                  If your browser asks whether CCTV can access devices on your
+                  local network, allow it. This is used only to check whether
+                  your private camera server is reachable.
+                </li>
+                <li>
+                  A successful setup check only confirms the camera page is
+                  reachable. It does not prove live video.
+                </li>
+              </ul>
+              <h3 className="mt-4 font-medium text-ink">
+                Camera page opens but video does not immediately appear
+              </h3>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                <li>
+                  Allow approximately 10 seconds for the initial remote
+                  connection.
+                </li>
+                <li>Refresh the camera page.</li>
+                <li>Confirm Tailscale remains connected.</li>
+                <li>
+                  A successful setup check only confirms Tailscale HTTP
+                  reachability, not live video.
+                </li>
+              </ul>
+              <h3 className="mt-4 font-medium text-ink">New phone or computer</h3>
+              <p className="mt-2">Start setup again on the new device.</p>
+            </Disclosure>
+            <Disclosure title="Show all instructions">
+              <ol className="list-decimal space-y-1 pl-5">
+                <li>Install Tailscale for this device.</li>
+                <li>Sign in with the shared Camera Access account.</li>
+                <li>Wait until camera access is detected, then press Continue.</li>
+                <li>Open MPDEE Vision.</li>
+                <li>Add the camera page to your home screen or install it.</li>
+              </ol>
+            </Disclosure>
+          </section>
+
+          <div className="mt-8 mb-4 lg:hidden">
             <button
               type="button"
-              className="btn btn-ghost px-3 text-sm"
-              onClick={() => {
-                const previous = (stage - 1) as SetupStage;
-                if (previous === 2) {
-                  setCredentials(null);
-                  setCredentialsError(null);
-                  setCredentialsLoading(true);
-                }
-                if (previous === 3) {
-                  setProbe("checking");
-                }
-                update({ currentStage: previous });
-              }}
+              className="text-sm text-mute underline decoration-line underline-offset-4 hover:text-ink"
+              onClick={resetProgress}
             >
-              Back
+              Start setup again
             </button>
-          ) : null}
+          </div>
         </div>
 
-        <section className="mt-6 space-y-2">
-          <Disclosure title="Troubleshooting">
-            <h3 className="font-medium text-ink">Camera page will not load</h3>
-            <ul className="mt-2 list-disc space-y-1 pl-5">
-              <li>
-                The camera box may be temporarily offline. Wait a minute and
-                press Try again. That does not mean your password or Tailscale
-                sign-in is wrong.
-              </li>
-              <li>Check Tailscale is installed and says Connected.</li>
-              <li>Confirm you signed in with the MPDEE Vision Camera Access account, not your own account.</li>
-              <li>Return here and press Try again, then Open MPDEE Vision.</li>
-              <li>
-                If your browser asks whether CCTV can access devices on your
-                local network, allow it. This is used only to check whether
-                your private camera server is reachable.
-              </li>
-              <li>
-                A successful setup check only confirms the camera page is
-                reachable. It does not prove live video.
-              </li>
-            </ul>
-            <h3 className="mt-4 font-medium text-ink">
-              Camera page opens but video does not immediately appear
-            </h3>
-            <ul className="mt-2 list-disc space-y-1 pl-5">
-              <li>
-                Allow approximately 10 seconds for the initial remote
-                connection.
-              </li>
-              <li>Refresh the camera page.</li>
-              <li>Confirm Tailscale remains connected.</li>
-              <li>
-                A successful setup check only confirms Tailscale HTTP
-                reachability, not live video.
-              </li>
-            </ul>
-            <h3 className="mt-4 font-medium text-ink">New phone or computer</h3>
-            <p className="mt-2">Start setup again on the new device.</p>
-          </Disclosure>
-          <Disclosure title="Show all instructions">
-            <ol className="list-decimal space-y-1 pl-5">
-              <li>Install Tailscale for this device.</li>
-              <li>Sign in with the shared Camera Access account.</li>
-              <li>Wait until camera access is detected, then press Continue.</li>
-              <li>Open MPDEE Vision.</li>
-              <li>Add the camera page to your home screen or install it.</li>
-            </ol>
-          </Disclosure>
-        </section>
-
-        <div className="mt-8 mb-4">
-          <button
-            type="button"
-            className="text-sm text-mute underline decoration-line underline-offset-4 hover:text-ink"
-            onClick={resetProgress}
-          >
-            Start setup again
-          </button>
-        </div>
+        <aside className="hidden lg:block">
+          <div className="setup-rail panel p-5 xl:p-6">
+            <StageProgress stage={stage} completedUpTo={progress.completedUpTo} />
+            <div className="mt-5">
+              <DeviceSelect
+                detected={detected}
+                platform={platform}
+                onChange={(value) => update({ platformOverride: value })}
+              />
+            </div>
+            <p className="mt-2 text-sm text-mute">
+              Change this only if detection is wrong.
+            </p>
+            <PrimaryCta action={primaryAction} className="mt-6" />
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {stage > 1 ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost px-3 text-sm"
+                  onClick={goBack}
+                >
+                  Back
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="text-sm text-mute underline decoration-line underline-offset-4 hover:text-ink"
+                onClick={resetProgress}
+              >
+                Start setup again
+              </button>
+            </div>
+          </div>
+        </aside>
       </main>
 
-      {stage >= 4 ? (
-        <div className="fixed right-0 bottom-0 left-0 border-t border-line bg-canvas/95 p-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] md:hidden">
-          <button type="button" className="btn btn-primary w-full" onClick={openCameras}>
-            Open MPDEE Vision
-          </button>
-        </div>
-      ) : null}
+      <div className="setup-sticky-cta lg:hidden">
+        <PrimaryCta action={primaryAction} />
+      </div>
     </div>
   );
 }
@@ -612,14 +785,9 @@ function InstallStage({
           </ol>
           <p className="text-sm">{WINDOWS_SECONDARY_SUPPORTING}</p>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <button type="button" className="btn btn-primary" onClick={onInstalled}>
-            Installed
-          </button>
-          <button type="button" className="btn btn-secondary" onClick={onInstalled}>
-            {WINDOWS_SECONDARY_ACTION}
-          </button>
-        </div>
+        <button type="button" className="btn btn-secondary" onClick={onInstalled}>
+          {WINDOWS_SECONDARY_ACTION}
+        </button>
       </>
     );
   }
@@ -656,9 +824,9 @@ function InstallStage({
       ) : (
         <p>Install Tailscale, then return here.</p>
       )}
-      <button type="button" className="btn btn-secondary" onClick={onInstalled}>
-        Installed
-      </button>
+      <p className="text-sm">
+        When Tailscale is installed, press Installed.
+      </p>
     </>
   );
 }
@@ -675,7 +843,6 @@ function SignInStage({
   onTogglePassword,
   onCopy,
   onDownloadHelper,
-  onContinue,
 }: {
   view: WizardView;
   credentials: SharedLogin | null;
@@ -688,7 +855,6 @@ function SignInStage({
   onTogglePassword: () => void;
   onCopy: (label: string, value: string) => Promise<void>;
   onDownloadHelper: () => Promise<void>;
-  onContinue: () => void;
 }) {
   const providerLabel = credentials
     ? SHARED_LOGIN_PROVIDER_LABELS[credentials.provider]
@@ -762,14 +928,6 @@ function SignInStage({
           ) : null}
         </div>
       ) : null}
-      <button
-        type="button"
-        className="btn btn-primary"
-        onClick={onContinue}
-        disabled={!credentials}
-      >
-        I have signed in
-      </button>
     </>
   );
 }
@@ -813,11 +971,9 @@ function CredentialRow({
 function VerifyStage({
   probe,
   onRetry,
-  onContinue,
 }: {
   probe: CameraHealthResult | "checking";
   onRetry: () => void;
-  onContinue: () => void;
 }) {
   return (
     <>
@@ -845,19 +1001,9 @@ function VerifyStage({
           </p>
         </div>
       ) : null}
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={onContinue}
-          disabled={!canContinueVerify(probe)}
-        >
-          Continue
-        </button>
-        <button type="button" className="btn btn-secondary" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
+      <button type="button" className="btn btn-secondary" onClick={onRetry}>
+        Try again
+      </button>
     </>
   );
 }
