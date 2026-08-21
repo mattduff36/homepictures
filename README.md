@@ -138,7 +138,7 @@ TAILSCALE_AUTHKEY=
 
 Rules:
 
-- `SETUP_PASSWORD` must be at least 16 characters. Use a randomly generated value.
+- `SETUP_PASSWORD` must be at least 8 characters.
 - `SESSION_SECRET` must be at least 32 bytes. `openssl rand -base64 32` is enough.
 - `CAMERA_URL` must be the private `https://` camera PWA URL, for example `https://<machine>.<tailnet>.ts.net/`. Do not commit the real hostname.
 - Shared login values are required for wizard sign-in. `TAILSCALE_SHARED_LOGIN_PROVIDER` must be one of `google`, `microsoft`, `apple`, or `github`.
@@ -208,7 +208,7 @@ After a production deploy, open the site and confirm:
 
 ### Change `SETUP_PASSWORD`
 
-1. Generate a new random password of at least 16 characters.
+1. Generate a new password of at least 8 characters.
 2. Update `SETUP_PASSWORD` in Vercel.
 3. Redeploy.
 4. Share the new password with authorised people through a private channel.
