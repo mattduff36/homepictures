@@ -74,4 +74,5 @@ test("HTML, setup, and auth routes disable store", () => {
   assert.equal(shouldDisableStore("/api/setup/windows-signin"), true);
   assert.equal(shouldDisableStore("/_next/static/chunk.js"), false);
   assert.equal(shouldDisableStore("/Install-CCTV-Tailscale.ps1"), false);
+  assert.equal(shouldDisableStore("/Install-CCTV-Tailscale.cmd"), false);
 });

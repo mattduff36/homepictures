@@ -5,7 +5,7 @@ import { jsonError } from "@/lib/http";
 import { isAllowedSameOriginRead } from "@/lib/origin";
 import {
   WINDOWS_SIGNIN_FILENAME,
-  buildWindowsSigninScript,
+  buildWindowsSigninLauncher,
 } from "@/lib/windows-signin";
 
 export const dynamic = "force-dynamic";
@@ -26,12 +26,12 @@ export async function GET(request: Request) {
     return jsonError(503, "Setup is temporarily unavailable.");
   }
 
-  const script = buildWindowsSigninScript(authKey);
+  const script = buildWindowsSigninLauncher(authKey);
   return new NextResponse(script, {
     status: 200,
     headers: {
       "Cache-Control": "private, no-store",
-      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Type": "application/octet-stream",
       "Content-Disposition": `attachment; filename="${WINDOWS_SIGNIN_FILENAME}"`,
       "X-Content-Type-Options": "nosniff",
     },

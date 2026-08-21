@@ -7,8 +7,8 @@
   HomePictures camera-viewing installer. This script contains no passwords,
   Tailscale share links, camera URLs, auth keys, or other secrets.
 
-  If Tailscale is already installed, the script makes no changes and tells
-  you to return to the Camera Access page.
+  If Tailscale is already installed, the script makes no changes and opens
+  the Camera Access setup page.
 
   If this PC already has Tailscale policies under
   HKLM\SOFTWARE\Policies\Tailscale, those policies are left untouched.
@@ -16,8 +16,9 @@
   On a fresh PC it downloads the current stable installer from
   https://pkgs.tailscale.com/stable/, verifies the SHA-256 checksum and a
   valid Tailscale Authenticode signature, writes camera-safe machine
-  policies, then installs Tailscale. Sign-in stays on the Camera Access
-  setup wizard. No auth key is used.
+  policies, then installs Tailscale. On success it opens the Camera Access
+  setup page and closes. Sign-in stays on the setup wizard. No auth key is
+  used.
 
 .NOTES
   Public, auditable script. Safe to read before running.
@@ -25,7 +26,10 @@
   Restore script: C:\ProgramData\MPDEE-HomePictures\Restore-Tailscale-Defaults.ps1
 #>
 [CmdletBinding()]
-param()
+param(
+    [string]$ReturnUrl = 'https://cctv.mpdee.uk/setup',
+    [string]$ReturnFlag = 'installed'
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -80,6 +84,75 @@ function Wait-ForReader {
             Start-Sleep -Seconds 8
         }
     }
+}
+
+function Test-AllowedSetupReturnUrl {
+    param([Parameter(Mandatory)][string]$Url)
+
+    try {
+        $uri = [uri]$Url
+    } catch {
+        return $false
+    }
+
+    if (-not $uri.IsAbsoluteUri) {
+        return $false
+    }
+    if ($uri.Scheme -cne 'https') {
+        return $false
+    }
+    if ($uri.UserInfo) {
+        return $false
+    }
+
+    $hostOk = $false
+    foreach ($name in @('cctv.mpdee.uk', 'localhost', '127.0.0.1')) {
+        if ($uri.Host -ceq $name) {
+            $hostOk = $true
+        }
+    }
+    if (-not $hostOk) {
+        return $false
+    }
+
+    $path = $uri.AbsolutePath.TrimEnd('/')
+    return ($path -ceq '/setup')
+}
+
+function Get-SetupWizardUri {
+    param([string]$Flag)
+
+    if (-not (Test-AllowedSetupReturnUrl $ReturnUrl)) {
+        throw "The setup return URL is not allowed."
+    }
+    if ($Flag -and $Flag -notin @('installed', 'signedin')) {
+        throw "Unsupported setup return flag."
+    }
+
+    $uri = [uri]$ReturnUrl
+    $origin = $uri.GetLeftPart([System.UriPartial]::Authority)
+    if ($Flag) {
+        return [uri]($origin + '/setup?windows=' + $Flag)
+    }
+    return [uri]($origin + '/setup')
+}
+
+function Complete-InstallerSuccess {
+    $target = $null
+    try {
+        $target = Get-SetupWizardUri -Flag $ReturnFlag
+        Start-Process $target.AbsoluteUri | Out-Null
+        $script:SkipWait = $true
+    } catch {
+        Write-WarnLine "Could not open the setup page automatically."
+        if ($target) {
+            Write-Info $target.AbsoluteUri
+        } else {
+            Write-Info "Open https://cctv.mpdee.uk/setup in your browser."
+        }
+        $script:SkipWait = $false
+    }
+    exit 0
 }
 
 function Test-IsAdministrator {
@@ -557,7 +630,9 @@ function Restart-Elevated {
     }
 
     Write-Info "Administrator permission is required to install Tailscale for camera access."
-    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    $safeReturnUrl = $ReturnUrl -replace '"', ''
+    $safeReturnFlag = $ReturnFlag -replace '"', ''
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ReturnUrl `"$safeReturnUrl`" -ReturnFlag `"$safeReturnFlag`""
 
     try {
         $script:SkipWait = $true
@@ -955,13 +1030,13 @@ Write-Info "Tailscale itself was not uninstalled or signed out."
 function Install-CameraSafePolicies {
     if (Test-TailscaleAlreadyInstalled) {
         Show-ExistingInstallMessage
-        exit 0
+        Complete-InstallerSuccess
     }
 
     $existingPolicies = Get-ManagedPolicyInspection
     if ($existingPolicies -eq 'managed') {
         Show-ManagedPolicyMessage
-        exit 0
+        Complete-InstallerSuccess
     }
     if ($existingPolicies -eq 'unreadable') {
         throw "The Tailscale policy key could not be inspected. Installation stopped."
@@ -1082,7 +1157,7 @@ function Remove-TempDirectory {
 function Show-SuccessMessage {
     Write-Host ""
     Write-Ok "Tailscale is installed with camera-safe network settings."
-    Write-Info "Return to the Camera Access setup wizard and sign in with the Camera Access account."
+    Write-Info "Opening the Camera Access setup wizard so you can sign in."
     Write-Host ""
     Write-Info "To undo only the camera-specific policies later, run:"
     Write-Info "  $RestorePath"
@@ -1098,17 +1173,17 @@ try {
 
     if (Test-TailscaleAlreadyInstalled) {
         Show-ExistingInstallMessage
-        exit 0
+        Complete-InstallerSuccess
     }
 
     $readablePolicies = Get-ManagedPolicyInspection
     if ($readablePolicies -eq 'managed') {
         Show-ManagedPolicyMessage
-        exit 0
+        Complete-InstallerSuccess
     }
     if ($readablePolicies -eq 'unreadable') {
         Show-UnreadablePolicyMessage
-        exit 0
+        Complete-InstallerSuccess
     }
 
     if (-not (Test-IsAdministrator)) {
@@ -1117,13 +1192,13 @@ try {
 
     if (Test-TailscaleAlreadyInstalled) {
         Show-ExistingInstallMessage
-        exit 0
+        Complete-InstallerSuccess
     }
 
     $existingPolicies = Get-ManagedPolicyInspection
     if ($existingPolicies -eq 'managed') {
         Show-ManagedPolicyMessage
-        exit 0
+        Complete-InstallerSuccess
     }
     if ($existingPolicies -eq 'unreadable') {
         throw "The Tailscale policy key could not be inspected. Installation stopped."
@@ -1153,7 +1228,7 @@ try {
 
     Start-TailscaleClient
     Show-SuccessMessage
-    exit 0
+    Complete-InstallerSuccess
 } catch {
     Write-Host ""
     Write-Host "Installation stopped. No fallback that weakens these checks will be used." -ForegroundColor Red

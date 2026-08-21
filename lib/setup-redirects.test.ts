@@ -25,7 +25,7 @@ test("root is the connection gateway and setup stays password-protected", () => 
   assert.doesNotMatch(setup, /getCapabilityUrls/);
 });
 
-test("login and lock return to /setup and Open Cameras still assigns CAMERA_URL", () => {
+test("login and lock return to /setup and Open MPDEE Vision still assigns CAMERA_URL", () => {
   const gate = readFileSync(join(root, "components", "password-gate.tsx"), "utf8");
   const flow = readFileSync(join(root, "components", "setup-flow.tsx"), "utf8");
 

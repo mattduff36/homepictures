@@ -50,9 +50,22 @@ The camera app is served over HTTPS (`CAMERA_URL`). Live video uses WebRTC/go2rt
 
 The shared Camera Access identity must be used only for this project. The provider account should hold no email, storage, recovery, or unrelated privileges that family members should not share. Anyone who knows those credentials can control this identity and enrol new devices.
 
+## Confirmed production state
+
+This is current as of the Camera Access bootstrap. Do not treat it as unfinished design.
+
+- The dedicated Camera Access Google identity exists and owns a separate Camera Access tailnet. Family devices sign in as that identity. They do not join the home tailnet.
+- The Raspberry Pi has been machine-shared from the home tailnet into Camera Access, and that share has been accepted. Family setup has no share-accept step. `TAILSCALE_SHARE_URL` is obsolete and is not read by the app.
+- A clean iPhone install has been proven: App Store Tailscale, shared Camera Access Google sign-in, the phone and the shared Pi both appear in the Camera Access tailnet, and cameras work when the Pi is online.
+- The first iPhone “camera access not detected” result was a Pi outage (offline in Tailscale and on the LAN). Rebooting the NVR/Pi restored access. That is infrastructure, not a wrong password or Tailscale login.
+- Vercel has the seven server-only variables: `SETUP_PASSWORD`, `SESSION_SECRET`, `CAMERA_URL`, `TAILSCALE_SHARED_LOGIN_EMAIL`, `TAILSCALE_SHARED_LOGIN_PASSWORD`, `TAILSCALE_SHARED_LOGIN_PROVIDER`, and `TAILSCALE_AUTHKEY`. None use `NEXT_PUBLIC_`.
+- A Camera Access tailnet auth key exists for the Windows helper. It is untagged. It is never placed in the public installer.
+
+`/healthz` success is HTTP reachability only. It does not prove WebRTC or live video.
+
 ## Administrator bootstrap
 
-Do this once before handing the portal to family members. Do not automate it against the Pi.
+Do this once before handing the portal to family members. Do not automate it against the Pi. This bootstrap is already complete in production.
 
 1. Create a **new** SSO identity used only for MPDEE Vision / Camera Access. Do not reuse the home Tailscale owner.
 2. Sign that identity into Tailscale so it owns a dedicated Camera Access tailnet.
@@ -70,30 +83,34 @@ After the portal password, `/setup` shows one stage at a time:
 
 1. Install Tailscale for the detected platform.
 2. Sign in to Camera Access with the shared SSO identity. Windows PCs with no existing Tailscale account may use the authenticated sign-in helper.
-3. Verify camera access with the existing `/healthz` probe. Success unlocks **Continue**. The wizard never auto-advances.
-4. Open Cameras.
+3. Verify camera access with the existing `/healthz` probe. Success shows **Camera access detected** and unlocks **Continue**. The wizard never auto-advances. If the camera box is offline, the wizard says **Camera system isn't reachable yet** and does not blame the person's password or Tailscale login.
+4. Open MPDEE Vision.
 5. Add to Home Screen / install, using only that platform's instructions. On iPhone/iPad, open MPDEE Vision in Safari, then Share → Add to Home Screen.
 
 Progress is stored in `localStorage` as `homepictures.setup.v2`. It stores only stage numbers and an optional platform override. It never stores passwords, auth keys, URLs, or probe results. A previous successful probe is not treated as current connectivity. Old `v1` progress is ignored.
 
 ## Windows camera installer
 
-Windows visitors who do not already have Tailscale can download a public, auditable script:
+Windows visitors who do not already have Tailscale can download a public, double-clickable launcher:
 
-`/Install-CCTV-Tailscale.ps1`
+`/Install-CCTV-Tailscale.cmd`
 
-On a PC where Tailscale is not installed, the script downloads the current stable official installer from `https://pkgs.tailscale.com/stable/`, checks the published SHA-256 hash, requires a valid Authenticode signature from Tailscale Inc., then writes camera-safe machine policies. It does not use an auth key and does not sign the person in.
+Double-click that file and approve the administrator prompt. It downloads the auditable `/Install-CCTV-Tailscale.ps1` script and runs it with `-File`. It does not use `Invoke-Expression`.
 
-If Tailscale is already installed, or if `HKLM\SOFTWARE\Policies\Tailscale` already has policy values, the script makes no changes.
+On a PC where Tailscale is not installed, the script downloads the current stable official installer from `https://pkgs.tailscale.com/stable/`, checks the published SHA-256 hash, requires a valid Authenticode signature from Tailscale Inc., then writes camera-safe machine policies. It does not use an auth key and does not sign the person in. On success, or if Tailscale is already installed, the window closes and opens `https://cctv.mpdee.uk/setup?windows=installed` so the wizard can continue. On error the window stays open with the reason.
 
-The public script contains no `SETUP_PASSWORD`, session secret, shared login, camera URL, or Tailscale auth key.
+If `HKLM\SOFTWARE\Policies\Tailscale` already has policy values, the script makes no changes and still returns to setup.
+
+The public launcher and script contain no `SETUP_PASSWORD`, session secret, shared login, camera URL, or Tailscale auth key.
 
 After a fresh install, the wizard can download a **separate**, session-gated sign-in helper. That helper:
 
-- is generated at request time and is never a static public file
+- is generated at request time as a double-clickable `.cmd` and is never a static public file
 - uses an auth key from the Camera Access tailnet only
 - refuses to run `up`, `login`, `logout`, `reset`, or `switch` if Tailscale already has an account
 - passes the key through an ACL-protected temporary `file:` argument, then deletes that file
+- opens the setup page and closes on success; if an account is already present it opens setup without changing login
+- stays open with an explanation if sign-in fails
 - must be deleted after use; copies may remain in Downloads, backups, or endpoint telemetry
 
 If Tailscale is already signed in, or the helper is unavailable, the person signs in with the shared SSO account shown in the wizard.
@@ -270,6 +287,30 @@ Login attempts are throttled in memory on each serverless instance, about 5 atte
 - Submitted passwords, environment values, shared credentials, auth keys, and the camera URL are never logged.
 - The public `/` page necessarily receives `CAMERA_URL` so the browser can check `/healthz` and then open the cameras. Tailscale still controls who can reach that host.
 - Do not commit camera credentials, RTSP URLs, or Raspberry Pi LAN addresses. The Tailscale Serve localhost routes above are the published camera HTTPS surface.
+
+## Device acceptance
+
+`/healthz` is not enough. Confirm live video on the real MPDEE Vision page.
+
+### Clean Windows 11 Surface
+
+Start with Tailscale completely removed, including any leftover local Tailscale identity.
+
+1. Open `https://cctv.mpdee.uk/` and unlock `/setup`.
+2. Confirm the wizard identifies Windows.
+3. Download and double-click `Install-CCTV-Tailscale.cmd`. Approve UAC.
+4. Official Tailscale installs. Normal internet still works.
+5. Sign in to the Camera Access tailnet with the Windows helper or the shared MPDEE Vision Google account, not a personal Google account.
+6. The shared Pi becomes reachable. The wizard shows **Camera access detected**. Press **Continue**.
+7. Open MPDEE Vision and confirm live WebRTC video.
+
+### iPhone regression
+
+App Store Tailscale → MPDEE Vision Google account (not a personal Google account) → allow the iOS VPN prompt → **Continue** after detect → Safari Share → Add to Home Screen → live video.
+
+### Away from the home LAN
+
+Test camera playback on a mobile or external network. Count live video, not `/healthz` alone.
 
 ## License
 

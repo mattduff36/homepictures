@@ -4,7 +4,7 @@ export const SETUP_STAGE_TITLES = [
   "Install Tailscale",
   "Sign in to Camera Access",
   "Connect and verify camera access",
-  "Open Cameras",
+  "Open MPDEE Vision",
   "Add Cameras to your Home Screen",
 ] as const;
 

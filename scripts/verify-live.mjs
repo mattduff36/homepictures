@@ -85,6 +85,14 @@ assert.doesNotMatch(installer.text, /CAMERA_URL/);
 assert.doesNotMatch(installer.text, new RegExp(shareCanary));
 assert.doesNotMatch(installer.text, new RegExp(cameraCanary));
 assert.doesNotMatch(installer.text, new RegExp(password));
+
+const installerLauncher = await read("/Install-CCTV-Tailscale.cmd");
+assert.equal(installerLauncher.response.status, 200);
+assert.match(installerLauncher.text, /Install-CCTV-Tailscale\.ps1/);
+assert.doesNotMatch(installerLauncher.text, /SETUP_PASSWORD/);
+assert.doesNotMatch(installerLauncher.text, /TAILSCALE_AUTHKEY/);
+assert.doesNotMatch(installerLauncher.text, /Invoke-Expression/);
+assert.doesNotMatch(installerLauncher.text, new RegExp(password));
 assert.match(
   header(gateway.response.headers, "content-security-policy") ?? "",
   /frame-ancestors 'none'/,

@@ -19,6 +19,10 @@ const installer = readFileSync(
   join(root, "public", "Install-CCTV-Tailscale.ps1"),
   "utf8",
 );
+const installerLauncher = readFileSync(
+  join(root, "public", "Install-CCTV-Tailscale.cmd"),
+  "utf8",
+);
 
 test("SEC-API-01: setup secret routes enforce session and no-store", () => {
   for (const source of [credentials, windowsSignin]) {
@@ -35,7 +39,7 @@ test("SEC-API-01: setup secret routes enforce session and no-store", () => {
   assert.match(credentials, /password: login.password/);
   assert.match(credentials, /provider: login.provider/);
   assert.doesNotMatch(credentials, /authKey/);
-  assert.match(windowsSignin, /buildWindowsSigninScript\(authKey\)/);
+  assert.match(windowsSignin, /buildWindowsSigninLauncher\(authKey\)/);
   assert.match(windowsSignin, /Content-Disposition/);
   assert.match(windowsSignin, /attachment/);
 });
@@ -57,9 +61,13 @@ test("SEC-HTML-01: setup HTML paths do not embed shared password or auth key", (
 });
 
 test("SEC-INSTALLER-01: public installer stays secret-free", () => {
-  assert.doesNotMatch(installer, /TAILSCALE_SHARED_LOGIN/);
-  assert.doesNotMatch(installer, /TAILSCALE_AUTHKEY/);
-  assert.doesNotMatch(installer, /tskey-/);
-  assert.doesNotMatch(installer, /Complete-CCTV-Tailscale-Signin/);
-  assert.doesNotMatch(installer, /--auth-key/);
+  for (const source of [installer, installerLauncher]) {
+    assert.doesNotMatch(source, /TAILSCALE_SHARED_LOGIN/);
+    assert.doesNotMatch(source, /TAILSCALE_AUTHKEY/);
+    assert.doesNotMatch(source, /tskey-/);
+    assert.doesNotMatch(source, /Complete-CCTV-Tailscale-Signin/);
+    assert.doesNotMatch(source, /--auth-key/);
+    assert.doesNotMatch(source, /Invoke-Expression/);
+    assert.doesNotMatch(source, /\biex\b/i);
+  }
 });

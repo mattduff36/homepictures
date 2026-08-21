@@ -24,5 +24,6 @@ test("ENV-BOUNDARY-01: camera URL is independent and share URL is gone", () => {
   assert.doesNotMatch(example, /TAILSCALE_SHARE_URL/);
   assert.doesNotMatch(example, /TAILSCALE_API_KEY/);
   assert.doesNotMatch(example, /NEXT_PUBLIC_/);
-  assert.doesNotMatch(readme, /TAILSCALE_SHARE_URL/);
+  assert.match(readme, /TAILSCALE_SHARE_URL` is obsolete/);
+  assert.doesNotMatch(source, /process\.env\.TAILSCALE_SHARE_URL/);
 });

@@ -15,6 +15,10 @@ const installer = readFileSync(
   join(root, "public", "Install-CCTV-Tailscale.ps1"),
   "utf8",
 );
+const installerLauncher = readFileSync(
+  join(root, "public", "Install-CCTV-Tailscale.cmd"),
+  "utf8",
+);
 const restore = readFileSync(
   join(root, "scripts", "windows", "Restore-Tailscale-Defaults.ps1"),
   "utf8",
@@ -41,16 +45,20 @@ const SECRET_MARKERS = [
 ];
 
 test("the public installer contains no secrets or capability URLs", () => {
-  for (const marker of SECRET_MARKERS) {
-    assert.doesNotMatch(
-      installer,
-      new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-      `installer must not contain ${marker}`,
-    );
+  for (const source of [installer, installerLauncher]) {
+    for (const marker of SECRET_MARKERS) {
+      assert.doesNotMatch(
+        source,
+        new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        `installer must not contain ${marker}`,
+      );
+    }
+    assert.doesNotMatch(source, /ts\.net/);
+    assert.doesNotMatch(source, /192\.168\./);
+    assert.doesNotMatch(source, /authkey/i);
+    assert.doesNotMatch(source, /Invoke-Expression/);
+    assert.doesNotMatch(source, /\biex\b/i);
   }
-  assert.doesNotMatch(installer, /ts\.net/);
-  assert.doesNotMatch(installer, /192\.168\./);
-  assert.doesNotMatch(installer, /authkey/i);
 });
 
 test("the public installer only downloads from the official stable package host", () => {
@@ -181,6 +189,28 @@ test("the restore script refuses to delete unrelated Tailscale policies", () => 
   assert.match(restore, /\$AllowedCameraPolicies/);
   assert.match(restore, /not a HomePictures camera policy/);
   assert.match(restore, /camera-viewing-client/);
+});
+
+test("the public launcher double-clicks into the auditable script and does not invoke it in memory", () => {
+  assert.match(installerLauncher, /Start-Process -FilePath '%~f0' -Verb RunAs/);
+  assert.match(installerLauncher, /curl\.exe -fsS --proto =https --max-redirs 0/);
+  assert.match(installerLauncher, /https:\/\/cctv\.mpdee\.uk\/Install-CCTV-Tailscale\.ps1/);
+  assert.match(installerLauncher, /powershell\.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1%"/);
+  assert.match(installerLauncher, /-ReturnUrl "%RETURN_URL%" -ReturnFlag "installed"/);
+  assert.doesNotMatch(installerLauncher, /Invoke-WebRequest/);
+  assert.doesNotMatch(installerLauncher, /Invoke-Expression/);
+});
+
+test("the public installer opens setup on success and waits only after an error", () => {
+  assert.match(installer, /function Complete-InstallerSuccess/);
+  assert.match(installer, /windows=' \+ \$Flag/);
+  assert.match(installer, /Start-Process \$target\.AbsoluteUri/);
+  assert.match(installer, /\$script:SkipWait = \$true/);
+  assert.match(installer, /Show-ExistingInstallMessage\s+Complete-InstallerSuccess/);
+  assert.match(installer, /Show-SuccessMessage\s+Complete-InstallerSuccess/);
+  const errorBranch = installer.slice(installer.indexOf("Installation stopped. No fallback"));
+  assert.match(errorBranch, /exit 1/);
+  assert.match(installer, /if \(-not \$script:SkipWait\) \{\s*Wait-ForReader/);
 });
 
 test("the public installer quotes paths and checks managed policies before UAC", () => {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { SETUP_STAGE_TITLES } from "./setup-copy";
 import {
+  applyWindowsReturnFlag,
   canContinueVerify,
   completeSetupStage,
   wizardViewFor,
@@ -81,9 +82,29 @@ test("WIZARD-FLOW-01: every platform has five stages and verify does not auto-ad
   assert.equal(completeSetupStage(stage3, "ok").currentStage, 4);
   assert.equal(stage3.currentStage, 3);
 
+  assert.equal(
+    applyWindowsReturnFlag(DEFAULT_SETUP_PROGRESS, "installed").currentStage,
+    2,
+  );
+  assert.equal(applyWindowsReturnFlag(stage3, "installed").currentStage, 3);
+  assert.equal(
+    applyWindowsReturnFlag({ ...DEFAULT_SETUP_PROGRESS, currentStage: 2, completedUpTo: 1 }, "signedin")
+      .currentStage,
+    3,
+  );
+  assert.equal(applyWindowsReturnFlag(stage3, "signedin").currentStage, 3);
+  assert.equal(applyWindowsReturnFlag(DEFAULT_SETUP_PROGRESS, "signedin").currentStage, 1);
+  assert.equal(applyWindowsReturnFlag(stage3, "ok").currentStage, 3);
+
   assert.match(flow, /wizardViewFor\(platform, stage, probe\)/);
   assert.match(flow, /completeSetupStage\(progress, probe\)/);
+  assert.match(flow, /applyWindowsReturnFlag\(stored, flag\)/);
   assert.match(flow, /canContinueVerify\(probe\)/);
+  assert.match(flow, /Camera system isn&apos;t reachable yet/);
+  assert.match(flow, /does not mean\s+your password or Tailscale sign-in is wrong/);
+  assert.match(flow, /Do not use your own \{providerLabel\} account/);
+  assert.match(flow, /Open MPDEE Vision/);
+  assert.doesNotMatch(flow, /Camera access was not detected/);
   assert.doesNotMatch(flow, /if \(result === "ok"\) \{\s*completeCurrentStage/);
   assert.doesNotMatch(flow, /Connect Camera Access/);
   assert.doesNotMatch(flow, /shareUrl/);

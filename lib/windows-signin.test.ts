@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   WINDOWS_SIGNIN_FILENAME,
+  WINDOWS_SIGNIN_SCRIPT_MARKER,
+  buildWindowsSigninLauncher,
   buildWindowsSigninScript,
 } from "./windows-signin";
 
@@ -62,7 +64,12 @@ function runGeneratedProfileCheck(json: string): string {
 
 test("WIN-FRESH-01: helper uses a protected key file and never puts the key on the CLI", () => {
   const script = buildWindowsSigninScript(authKey);
-  assert.equal(WINDOWS_SIGNIN_FILENAME, "Complete-CCTV-Tailscale-Signin.ps1");
+  assert.equal(WINDOWS_SIGNIN_FILENAME, "Complete-CCTV-Tailscale-Signin.cmd");
+  const launcher = buildWindowsSigninLauncher(authKey);
+  assert.match(launcher, new RegExp(WINDOWS_SIGNIN_SCRIPT_MARKER));
+  assert.match(launcher, /powershell\.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1%"/);
+  assert.doesNotMatch(launcher, /Invoke-Expression/);
+  assert.doesNotMatch(launcher, /\biex\b/i);
   assert.match(script, /\$AuthKeyMaterial = 'tskey-auth-CANARYHELPERKEY123'/);
   assert.match(script, /Protect-AuthKeyFile/);
   assert.match(script, /SetAccessRuleProtection\(\$true, \$false\)/);
@@ -94,7 +101,11 @@ test("WIN-SAFE-01: generated PowerShell treats official saved profiles as config
   assert.match(configuredBranch, /already has an account/);
   assert.match(configuredBranch, /will not switch, log out, reset/);
   assert.match(configuredBranch, /exit 2/);
+  assert.match(configuredBranch, /Open-SetupWizard/);
+  assert.doesNotMatch(configuredBranch, /Open-SetupWizard -Flag/);
   assert.doesNotMatch(configuredBranch, /&\s*\$exe up/);
+  assert.match(script, /Open-SetupWizard -Flag 'signedin'/);
+  assert.match(script, /Wait-ForReader/);
   assert.doesNotMatch(script, /&\s*\$exe login/);
   assert.doesNotMatch(script, /&\s*\$exe logout/);
   assert.doesNotMatch(script, /&\s*\$exe reset/);

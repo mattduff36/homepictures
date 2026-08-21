@@ -1,4 +1,5 @@
-export const WINDOWS_SIGNIN_FILENAME = "Complete-CCTV-Tailscale-Signin.ps1";
+export const WINDOWS_SIGNIN_FILENAME = "Complete-CCTV-Tailscale-Signin.cmd";
+export const WINDOWS_SIGNIN_SCRIPT_MARKER = "___HOMEPICTURES_PS1___";
 
 export function tailscaleProfilesLookUnconfigured(parsed: unknown): boolean {
   return Array.isArray(parsed) && parsed.length === 0;
@@ -29,6 +30,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $AuthKeyMaterial = '${encodedKey}'
+$ReturnUrl = 'https://cctv.mpdee.uk/setup'
+$script:SkipWait = $false
 
 function Write-Info([string]$Message) {
     Write-Host $Message
@@ -36,6 +39,68 @@ function Write-Info([string]$Message) {
 
 function Write-WarnLine([string]$Message) {
     Write-Host $Message
+}
+
+function Wait-ForReader {
+    Write-Host ""
+    Write-Host "Press Enter to close this window."
+    try {
+        [void][Console]::ReadLine()
+    } catch {
+        Start-Sleep -Seconds 8
+    }
+}
+
+function Test-AllowedSetupReturnUrl {
+    param([Parameter(Mandatory)][string]$Url)
+
+    try {
+        $uri = [uri]$Url
+    } catch {
+        return $false
+    }
+
+    if (-not $uri.IsAbsoluteUri -or $uri.Scheme -cne 'https' -or $uri.UserInfo) {
+        return $false
+    }
+
+    $hostOk = $false
+    foreach ($name in @('cctv.mpdee.uk', 'localhost', '127.0.0.1')) {
+        if ($uri.Host -ceq $name) {
+            $hostOk = $true
+        }
+    }
+    if (-not $hostOk) {
+        return $false
+    }
+
+    return ($uri.AbsolutePath.TrimEnd('/') -ceq '/setup')
+}
+
+function Get-SetupWizardUri {
+    param([string]$Flag)
+
+    if (-not (Test-AllowedSetupReturnUrl $ReturnUrl)) {
+        throw "The setup return URL is not allowed."
+    }
+    if ($Flag -and $Flag -notin @('installed', 'signedin')) {
+        throw "Unsupported setup return flag."
+    }
+
+    $uri = [uri]$ReturnUrl
+    $origin = $uri.GetLeftPart([System.UriPartial]::Authority)
+    if ($Flag) {
+        return [uri]($origin + '/setup?windows=' + $Flag)
+    }
+    return [uri]($origin + '/setup')
+}
+
+function Open-SetupWizard {
+    param([string]$Flag)
+
+    $target = Get-SetupWizardUri -Flag $Flag
+    Start-Process $target.AbsoluteUri | Out-Null
+    $script:SkipWait = $true
 }
 
 function Get-TailscaleExe {
@@ -187,36 +252,73 @@ function Protect-AuthKeyFile {
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
-$exe = Get-TailscaleExe
-if (-not $exe) {
-    Write-WarnLine "Tailscale was not found. Install it from the Camera Access setup page first."
-    Write-Info "This helper was not used to sign in."
-    exit 1
-}
-
-if (Test-TailscaleAlreadyConfigured -Exe $exe) {
-    Write-WarnLine "Tailscale already has an account on this PC."
-    Write-Info "HomePictures will not switch, log out, reset, or replace that account."
-    Write-Info "Sign in to Camera Access from the Tailscale app using the shared account on the setup page, or sign out yourself first."
-    Write-Info "Delete this downloaded script after use. It contains a sign-in secret."
-    exit 2
-}
-
-$keyPath = Join-Path $env:TEMP ('hp-ts-auth-' + [guid]::NewGuid().ToString('N') + '.key')
 try {
-    Protect-AuthKeyFile -Path $keyPath -Value $AuthKeyMaterial
-    $fileArg = 'file:' + $keyPath
-    & $exe up --auth-key=$fileArg
-    if ($LASTEXITCODE -ne 0) {
-        throw "Tailscale sign-in did not complete."
+    $exe = Get-TailscaleExe
+    if (-not $exe) {
+        throw "Tailscale was not found. Install it from the Camera Access setup page first."
     }
-    Write-Info "Camera Access sign-in finished. Return to the setup page and continue."
+
+    if (Test-TailscaleAlreadyConfigured -Exe $exe) {
+        Write-WarnLine "Tailscale already has an account on this PC."
+        Write-Info "HomePictures will not switch, log out, reset, or replace that account."
+        Write-Info "Sign in to Camera Access from the Tailscale app using the shared account on the setup page, or sign out yourself first."
+        Write-Info "Delete this downloaded script after use. It contains a sign-in secret."
+        try {
+            Open-SetupWizard
+        } catch {
+            Write-WarnLine "Could not open the setup page automatically. Open https://cctv.mpdee.uk/setup"
+            $script:SkipWait = $false
+        }
+        exit 2
+    }
+
+    $keyPath = Join-Path $env:TEMP ('hp-ts-auth-' + [guid]::NewGuid().ToString('N') + '.key')
+    try {
+        Protect-AuthKeyFile -Path $keyPath -Value $AuthKeyMaterial
+        $fileArg = 'file:' + $keyPath
+        & $exe up --auth-key=$fileArg
+        if ($LASTEXITCODE -ne 0) {
+            throw "Tailscale sign-in did not complete."
+        }
+        Write-Info "Camera Access sign-in finished. Opening the setup page."
+        Write-Info "Delete this downloaded script after use. It contains a sign-in secret."
+        Open-SetupWizard -Flag 'signedin'
+    } finally {
+        if (Test-Path -LiteralPath $keyPath) {
+            Remove-Item -LiteralPath $keyPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+} catch {
+    Write-Host ""
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Info "This helper was not used to finish sign-in."
+    exit 1
 } finally {
-    if (Test-Path -LiteralPath $keyPath) {
-        Remove-Item -LiteralPath $keyPath -Force -ErrorAction SilentlyContinue
+    if (-not $script:SkipWait) {
+        Wait-ForReader
     }
 }
+`;
+}
 
-Write-Info "Delete this downloaded script after use. It contains a sign-in secret."
+export function buildWindowsSigninLauncher(authKey: string): string {
+  const script = buildWindowsSigninScript(authKey);
+  return `@echo off
+setlocal EnableExtensions
+title HomePictures Camera Access sign-in
+set "PS1=%TEMP%\\hp-ts-signin-%RANDOM%%RANDOM%.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p='%~f0'; $o='%PS1%'; $lines=Get-Content -LiteralPath $p; $i=0; while ($i -lt $lines.Count -and $lines[$i] -ne '${WINDOWS_SIGNIN_SCRIPT_MARKER}') { $i++ }; if ($i -ge $lines.Count) { throw 'Helper script is incomplete.' }; $lines[($i+1)..($lines.Count-1)] | Set-Content -LiteralPath $o -Encoding UTF8"
+if errorlevel 1 (
+  echo The sign-in helper could not start.
+  pause
+  exit /b 1
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
+set "ERR=%ERRORLEVEL%"
+if exist "%PS1%" del /f /q "%PS1%" >nul 2>&1
+exit /b %ERR%
+
+${WINDOWS_SIGNIN_SCRIPT_MARKER}
+${script}
 `;
 }

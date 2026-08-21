@@ -26,8 +26,31 @@ export type WizardView = {
   verifyContinueEnabled: boolean;
 };
 
+export type WindowsReturnFlag = "installed" | "signedin";
+
 export function canContinueVerify(probe: VerifyProbe): boolean {
   return probe === "ok";
+}
+
+export function parseWindowsReturnFlag(value: string | null): WindowsReturnFlag | null {
+  if (value === "installed" || value === "signedin") {
+    return value;
+  }
+  return null;
+}
+
+export function applyWindowsReturnFlag(
+  progress: SetupProgress,
+  flag: string | null,
+): SetupProgress {
+  const parsed = parseWindowsReturnFlag(flag);
+  if (parsed === "installed" && progress.currentStage === 1) {
+    return completeSetupStage(progress, "checking");
+  }
+  if (parsed === "signedin" && progress.currentStage === 2) {
+    return completeSetupStage(progress, "checking");
+  }
+  return progress;
 }
 
 export function completeSetupStage(

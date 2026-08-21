@@ -24,8 +24,8 @@ import {
 const root = process.cwd();
 
 test("Windows installer is a same-origin public download with no secrets", () => {
-  assert.equal(WINDOWS_INSTALLER_FILENAME, "Install-CCTV-Tailscale.ps1");
-  assert.equal(WINDOWS_INSTALLER_PATH, "/Install-CCTV-Tailscale.ps1");
+  assert.equal(WINDOWS_INSTALLER_FILENAME, "Install-CCTV-Tailscale.cmd");
+  assert.equal(WINDOWS_INSTALLER_PATH, "/Install-CCTV-Tailscale.cmd");
   assert.equal(TAILSCALE_DOWNLOADS.windows.href, WINDOWS_INSTALLER_PATH);
   assert.doesNotMatch(WINDOWS_INSTALLER_PATH, /tailscale\.com/);
 });
@@ -63,7 +63,7 @@ test("Step 1 copy matches the Windows onboarding contract", () => {
   assert.match(WINDOWS_PRIMARY_SUPPORTING, /normal internet route/);
   assert.deepEqual(WINDOWS_INSTALLER_STEPS, [
     "Download the installer.",
-    "Right-click it and choose Run with PowerShell.",
+    "Double-click the downloaded file.",
     "Approve the Windows administrator prompt.",
   ]);
   assert.equal(WINDOWS_SECONDARY_ACTION, "I already have Tailscale");

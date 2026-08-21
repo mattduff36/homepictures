@@ -16,6 +16,7 @@ import { createCameraHealthProbe } from "@/lib/camera-health";
 import type { CameraHealthResult } from "@/lib/camera-health";
 import { SETUP_STAGE_TITLES } from "@/lib/setup-copy";
 import {
+  applyWindowsReturnFlag,
   canContinueVerify,
   completeSetupStage,
   wizardViewFor,
@@ -112,9 +113,24 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
 
   if (isClient && !storageLoaded) {
     const stored = readSetupProgress();
+    const flag = new URLSearchParams(window.location.search).get("windows");
+    const next = applyWindowsReturnFlag(stored, flag);
     setStorageLoaded(true);
-    setProgress(stored);
-    if (stored.currentStage === 2) {
+    setProgress(next);
+    if (next !== stored) {
+      writeSetupProgress(next);
+    }
+    if (flag) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("windows");
+      const search = url.searchParams.toString();
+      window.history.replaceState(
+        {},
+        "",
+        `${url.pathname}${search ? `?${search}` : ""}${url.hash}`,
+      );
+    }
+    if (next.currentStage === 2) {
       setCredentialsLoading(true);
     }
   }
@@ -448,7 +464,7 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
                         className="btn btn-primary min-w-44"
                         onClick={openCameras}
                       >
-                        Open Cameras
+                        Open MPDEE Vision
                       </button>
                       <button
                         type="button"
@@ -493,13 +509,22 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
           <Disclosure title="Troubleshooting">
             <h3 className="font-medium text-ink">Camera page will not load</h3>
             <ul className="mt-2 list-disc space-y-1 pl-5">
+              <li>
+                The camera box may be temporarily offline. Wait a minute and
+                press Try again. That does not mean your password or Tailscale
+                sign-in is wrong.
+              </li>
               <li>Check Tailscale is installed and says Connected.</li>
-              <li>Confirm you signed in with the Camera Access account.</li>
-              <li>Return here and press Try again, then Open Cameras.</li>
+              <li>Confirm you signed in with the MPDEE Vision Camera Access account, not your own account.</li>
+              <li>Return here and press Try again, then Open MPDEE Vision.</li>
               <li>
                 If your browser asks whether CCTV can access devices on your
                 local network, allow it. This is used only to check whether
                 your private camera server is reachable.
+              </li>
+              <li>
+                A successful setup check only confirms the camera page is
+                reachable. It does not prove live video.
               </li>
             </ul>
             <h3 className="mt-4 font-medium text-ink">
@@ -525,7 +550,7 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
               <li>Install Tailscale for this device.</li>
               <li>Sign in with the shared Camera Access account.</li>
               <li>Wait until camera access is detected, then press Continue.</li>
-              <li>Open Cameras.</li>
+              <li>Open MPDEE Vision.</li>
               <li>Add the camera page to your home screen or install it.</li>
             </ol>
           </Disclosure>
@@ -545,7 +570,7 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
       {stage >= 4 ? (
         <div className="fixed right-0 bottom-0 left-0 border-t border-line bg-canvas/95 p-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] md:hidden">
           <button type="button" className="btn btn-primary w-full" onClick={openCameras}>
-            Open Cameras
+            Open MPDEE Vision
           </button>
         </div>
       ) : null}
@@ -672,8 +697,8 @@ function SignInStage({
   return (
     <>
       <p>
-        Sign in to Tailscale with the shared Camera Access {providerLabel}{" "}
-        account. Use this account only for the cameras.
+        Sign in to Tailscale with the shared MPDEE Vision {providerLabel}{" "}
+        account shown below. Do not use your own {providerLabel} account.
       </p>
       {loading ? <p>Loading sign-in details…</p> : null}
       {error ? (
@@ -684,7 +709,7 @@ function SignInStage({
       {credentials ? (
         <div className="space-y-3 rounded-[var(--radius)] border border-line bg-panel-2 p-4">
           <p className="font-medium text-ink">
-            Sign in with {providerLabel}
+            Use this MPDEE Vision {providerLabel} account, not your own
           </p>
           <CredentialRow
             label="Email"
@@ -718,8 +743,9 @@ function SignInStage({
       {view.usesWindowsHelper ? (
         <div className="space-y-2">
           <p>
-            On a PC that does not already have a Tailscale account, you can
-            download a one-time sign-in helper. Delete it after use.
+            On a PC that does not already have a Tailscale account, download
+            the helper and double-click it. This page continues when you come
+            back. Delete the helper after use.
           </p>
           <button
             type="button"
@@ -811,10 +837,13 @@ function VerifyStage({
         </p>
       ) : null}
       {probe === "failed" ? (
-        <p className="text-danger" role="alert">
-          Camera access was not detected. Confirm Tailscale is connected and
-          try again.
-        </p>
+        <div className="space-y-2 text-danger" role="alert">
+          <p className="font-medium">Camera system isn&apos;t reachable yet</p>
+          <p>
+            The camera box may be offline or still starting. This does not mean
+            your password or Tailscale sign-in is wrong.
+          </p>
+        </div>
       ) : null}
       <div className="flex flex-col gap-2 sm:flex-row">
         <button

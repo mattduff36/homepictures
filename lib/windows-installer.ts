@@ -1,4 +1,7 @@
-export const WINDOWS_INSTALLER_FILENAME = "Install-CCTV-Tailscale.ps1";
+export const SETUP_PUBLIC_ORIGIN = "https://cctv.mpdee.uk";
+export const WINDOWS_INSTALLER_SCRIPT_FILENAME = "Install-CCTV-Tailscale.ps1";
+export const WINDOWS_INSTALLER_FILENAME = "Install-CCTV-Tailscale.cmd";
+export const WINDOWS_INSTALLER_SCRIPT_PATH = `/${WINDOWS_INSTALLER_SCRIPT_FILENAME}`;
 export const WINDOWS_INSTALLER_PATH = `/${WINDOWS_INSTALLER_FILENAME}`;
 
 export const WINDOWS_PRIMARY_HEADING_RECOMMENDED = "Windows — Recommended";
@@ -9,7 +12,7 @@ export const WINDOWS_PRIMARY_SUPPORTING =
 
 export const WINDOWS_INSTALLER_STEPS = [
   "Download the installer.",
-  "Right-click it and choose Run with PowerShell.",
+  "Double-click the downloaded file.",
   "Approve the Windows administrator prompt.",
 ] as const;
 

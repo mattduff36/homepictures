@@ -20,6 +20,17 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "public, max-age=300" },
         ],
       },
+      {
+        source: "/Install-CCTV-Tailscale.cmd",
+        headers: [
+          { key: "Content-Type", value: "application/octet-stream" },
+          {
+            key: "Content-Disposition",
+            value: 'attachment; filename="Install-CCTV-Tailscale.cmd"',
+          },
+          { key: "Cache-Control", value: "public, max-age=300" },
+        ],
+      },
     ];
   },
 };
