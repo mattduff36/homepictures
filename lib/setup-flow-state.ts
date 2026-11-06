@@ -5,7 +5,6 @@ import {
   homeScreenKind,
   usesAppStoreInstall,
   usesWindowsInstaller,
-  usesWindowsSigninHelper,
   type HomeScreenKind,
 } from "./setup-copy";
 import {
@@ -21,19 +20,18 @@ export type WizardView = {
   title: (typeof SETUP_STAGE_TITLES)[number];
   home: HomeScreenKind;
   usesWindowsInstaller: boolean;
-  usesWindowsHelper: boolean;
   usesAppStore: boolean;
   verifyContinueEnabled: boolean;
 };
 
-export type WindowsReturnFlag = "installed" | "signedin";
+export type WindowsReturnFlag = "installed";
 
 export function canContinueVerify(probe: VerifyProbe): boolean {
   return probe === "ok";
 }
 
 export function parseWindowsReturnFlag(value: string | null): WindowsReturnFlag | null {
-  if (value === "installed" || value === "signedin") {
+  if (value === "installed") {
     return value;
   }
   return null;
@@ -45,9 +43,6 @@ export function applyWindowsReturnFlag(
 ): SetupProgress {
   const parsed = parseWindowsReturnFlag(flag);
   if (parsed === "installed" && progress.currentStage === 1) {
-    return completeSetupStage(progress, "checking");
-  }
-  if (parsed === "signedin" && progress.currentStage === 2) {
     return completeSetupStage(progress, "checking");
   }
   return progress;
@@ -134,7 +129,6 @@ export function wizardViewFor(
     title: SETUP_STAGE_TITLES[stage - 1],
     home: homeScreenKind(platform),
     usesWindowsInstaller: usesWindowsInstaller(platform),
-    usesWindowsHelper: usesWindowsSigninHelper(platform),
     usesAppStore: usesAppStoreInstall(platform),
     verifyContinueEnabled: stage === 3 && canContinueVerify(probe),
   };

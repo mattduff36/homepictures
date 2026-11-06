@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getCameraOrigin } from "@/lib/camera-url";
+import { CAMERA_URL } from "@/lib/constants";
 import {
   buildContentSecurityPolicy,
   shouldDisableStore,
@@ -9,7 +10,7 @@ import {
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const isDev = process.env.NODE_ENV === "development";
-  const cameraOrigin = getCameraOrigin(process.env.CAMERA_URL);
+  const cameraOrigin = getCameraOrigin(CAMERA_URL);
   const csp = buildContentSecurityPolicy(nonce, isDev, cameraOrigin);
 
   const requestHeaders = new Headers(request.headers);

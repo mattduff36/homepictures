@@ -7,8 +7,14 @@ import {
   serializeSetupProgress,
 } from "./setup-progress";
 
-test("WIZARD-STATE-01: v1 is ignored and v2 is normalized without secrets", () => {
-  assert.equal(PROGRESS_STORAGE_KEY, "homepictures.setup.v2");
+test("WIZARD-STATE-01: Pi progress is ignored and v3 is normalized without secrets", () => {
+  assert.equal(PROGRESS_STORAGE_KEY, "homepictures.setup.v3");
+  assert.deepEqual(
+    parseSetupProgress(JSON.stringify({
+      v: 2, currentStage: 5, completedUpTo: 5, platformOverride: "ios",
+    })),
+    DEFAULT_SETUP_PROGRESS,
+  );
   assert.deepEqual(
     parseSetupProgress(
       JSON.stringify({
@@ -23,7 +29,7 @@ test("WIZARD-STATE-01: v1 is ignored and v2 is normalized without secrets", () =
   assert.deepEqual(
     parseSetupProgress(
       JSON.stringify({
-        v: 2,
+        v: 3,
         currentStage: 9,
         completedUpTo: 1,
         platformOverride: null,
@@ -34,7 +40,7 @@ test("WIZARD-STATE-01: v1 is ignored and v2 is normalized without secrets", () =
   assert.deepEqual(
     parseSetupProgress(
       JSON.stringify({
-        v: 2,
+        v: 3,
         currentStage: 2,
         completedUpTo: 1,
         platformOverride: "ios",
@@ -46,14 +52,14 @@ test("WIZARD-STATE-01: v1 is ignored and v2 is normalized without secrets", () =
 
   const valid = parseSetupProgress(
     JSON.stringify({
-      v: 2,
+      v: 3,
       currentStage: 3,
       completedUpTo: 2,
       platformOverride: "windows",
     }),
   );
   assert.deepEqual(valid, {
-    v: 2,
+    v: 3,
     currentStage: 3,
     completedUpTo: 2,
     platformOverride: "windows",

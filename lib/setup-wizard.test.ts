@@ -55,16 +55,14 @@ test("WIZARD-FLOW-01: every platform has five stages and verify does not auto-ad
     title: "Install Tailscale",
     home: "ios",
     usesWindowsInstaller: false,
-    usesWindowsHelper: false,
     usesAppStore: true,
     verifyContinueEnabled: false,
   });
   assert.deepEqual(wizardViewFor("windows", 2), {
     stage: 2,
-    title: "Sign in to Camera Access",
+    title: "Sign in and accept the Dell invite",
     home: "desktop",
     usesWindowsInstaller: true,
-    usesWindowsHelper: true,
     usesAppStore: false,
     verifyContinueEnabled: false,
   });
@@ -73,7 +71,6 @@ test("WIZARD-FLOW-01: every platform has five stages and verify does not auto-ad
     title: "Add Cameras to your Home Screen",
     home: "android",
     usesWindowsInstaller: false,
-    usesWindowsHelper: false,
     usesAppStore: false,
     verifyContinueEnabled: false,
   });
@@ -94,7 +91,7 @@ test("WIZARD-FLOW-01: every platform has five stages and verify does not auto-ad
   assert.equal(
     applyWindowsReturnFlag({ ...DEFAULT_SETUP_PROGRESS, currentStage: 2, completedUpTo: 1 }, "signedin")
       .currentStage,
-    3,
+    2,
   );
   assert.equal(applyWindowsReturnFlag(stage3, "signedin").currentStage, 3);
   assert.equal(applyWindowsReturnFlag(DEFAULT_SETUP_PROGRESS, "signedin").currentStage, 1);
@@ -108,7 +105,13 @@ test("WIZARD-FLOW-01: every platform has five stages and verify does not auto-ad
   assert.match(flow, /canContinueVerify\(probe\)/);
   assert.match(flow, /Camera system isn&apos;t reachable yet/);
   assert.match(flow, /does not mean\s+your password or Tailscale sign-in is wrong/);
-  assert.match(flow, /Do not use your own \{providerLabel\} account/);
+  assert.match(flow, /sign in with your own working account/);
+  assert.match(flow, /device share invite for the Dell camera server only/);
+  assert.match(flow, /accept it while signed in with the same Tailscale account/);
+  assert.match(flow, /Remove the old Raspberry Pi home-screen shortcut or installed app/);
+  assert.match(flow, /install it again from that address/);
+  assert.match(flow, /Do not install this setup website/);
+  assert.doesNotMatch(flow, /\/api\/setup\/(?:credentials|windows-signin)/);
   assert.match(flow, /Open MPDEE Vision/);
   assert.match(flow, /data-setup-cta="primary"/);
   assert.match(flow, /setup-sticky-cta/);

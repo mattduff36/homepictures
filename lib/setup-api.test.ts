@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { GET as getCredentials, POST as postCredentials } from "../app/api/setup/credentials/route";
+import { GET as getWindowsSignin, POST as postWindowsSignin } from "../app/api/setup/windows-signin/route";
 
 const root = process.cwd();
 const credentials = readFileSync(
@@ -24,24 +26,28 @@ const installerLauncher = readFileSync(
   "utf8",
 );
 
-test("SEC-API-01: setup secret routes enforce session and no-store", () => {
+test("SEC-API-01: obsolete secret and download routes are closed with no-store", async () => {
   for (const source of [credentials, windowsSignin]) {
-    assert.match(source, /hasValidSession/);
-    assert.match(source, /isAllowedSameOriginRead/);
-    assert.match(source, /jsonError\(401/);
-    assert.match(source, /jsonError\(503/);
-    assert.match(source, /private, no-store/);
+    assert.match(source, /jsonError\(410/);
+    assert.doesNotMatch(source, /getSharedLogin|getTailscaleAuthKey|buildWindowsSigninLauncher/);
+    assert.doesNotMatch(source, /process\.env/);
     assert.doesNotMatch(source, /console\.(log|debug|error)/);
     assert.doesNotMatch(source, /NEXT_PUBLIC_/);
   }
 
-  assert.match(credentials, /email: login.email/);
-  assert.match(credentials, /password: login.password/);
-  assert.match(credentials, /provider: login.provider/);
-  assert.doesNotMatch(credentials, /authKey/);
-  assert.match(windowsSignin, /buildWindowsSigninLauncher\(authKey\)/);
-  assert.match(windowsSignin, /Content-Disposition/);
-  assert.match(windowsSignin, /attachment/);
+  for (const handler of [getCredentials, getWindowsSignin]) {
+    const response = handler();
+    assert.equal(response.status, 410);
+    assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+    assert.equal(response.headers.get("Content-Disposition"), null);
+    const body = await response.json();
+    assert.deepEqual(Object.keys(body), ["error"]);
+    assert.match(body.error, /retired/);
+    assert.doesNotMatch(JSON.stringify(body), /tskey-|@|https?:/);
+  }
+  for (const handler of [postCredentials, postWindowsSignin]) {
+    assert.equal(handler().status, 405);
+  }
 });
 
 test("SEC-HTML-01: setup HTML paths do not embed shared password or auth key", () => {
@@ -53,7 +59,7 @@ test("SEC-HTML-01: setup HTML paths do not embed shared password or auth key", (
   assert.doesNotMatch(setupPage, /shareUrl/);
   assert.doesNotMatch(flow, /TAILSCALE_AUTHKEY/);
   assert.doesNotMatch(flow, /TAILSCALE_SHARED_LOGIN_PASSWORD/);
-  assert.match(flow, /\/api\/setup\/credentials/);
+  assert.doesNotMatch(flow, /\/api\/setup\/credentials|\/api\/setup\/windows-signin/);
   assert.match(home, /getCameraUrl/);
   assert.doesNotMatch(home, /getSharedLogin/);
   assert.doesNotMatch(home, /getTailscaleAuthKey/);

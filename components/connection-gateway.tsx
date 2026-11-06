@@ -48,6 +48,12 @@ export function ConnectionGateway({ cameraUrl }: { cameraUrl: string }) {
         <p className="text-lg font-semibold tracking-tight lg:text-2xl" aria-live="polite">
           {status}
         </p>
+        <p className="text-sm leading-relaxed text-mute">
+          MPDEE Vision has moved to Dell. Remove the old home-screen shortcut
+          or installed app and install again from the new camera page at{" "}
+          <a className="underline" href={cameraUrl}>{cameraUrl}</a>.
+          Choose Cancel for setup instructions.
+        </p>
       </div>
       <div className="setup-sticky-cta mt-8">
         <button type="button" className="btn btn-secondary w-full min-w-32 lg:w-auto" onClick={onCancel}>

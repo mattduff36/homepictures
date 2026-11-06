@@ -8,7 +8,7 @@ export const WINDOWS_PRIMARY_HEADING_RECOMMENDED = "Windows — Recommended";
 export const WINDOWS_PRIMARY_HEADING = "Windows";
 export const WINDOWS_PRIMARY_ACTION = "Install Tailscale for Camera Access";
 export const WINDOWS_PRIMARY_SUPPORTING =
-  "Downloads the official Tailscale client and configures it for camera access without enabling subnet routing or changing your normal internet route.";
+  "Downloads the official Tailscale client and configures it for camera access without enabling subnet routing or changing your normal internet route. Then sign in with your own working Tailscale account and accept the owner's private Dell-only device share invite.";
 
 export const WINDOWS_INSTALLER_STEPS = [
   "Download the installer.",

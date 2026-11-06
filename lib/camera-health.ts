@@ -64,7 +64,7 @@ export function createCameraHealthProbe(
           return;
         }
 
-        settle(response.ok ? "ok" : "failed");
+        settle(response.status === 204 ? "ok" : "failed");
       },
       () => {
         if (cancelled && !timedOut) {

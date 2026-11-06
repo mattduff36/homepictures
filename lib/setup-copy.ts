@@ -2,7 +2,7 @@ import type { PlatformId } from "./platforms";
 
 export const SETUP_STAGE_TITLES = [
   "Install Tailscale",
-  "Sign in to Camera Access",
+  "Sign in and accept the Dell invite",
   "Connect and verify camera access",
   "Open MPDEE Vision",
   "Add Cameras to your Home Screen",
@@ -27,10 +27,6 @@ export function homeScreenKind(platform: PlatformId | null): HomeScreenKind {
 }
 
 export function usesWindowsInstaller(platform: PlatformId | null): boolean {
-  return platform === "windows";
-}
-
-export function usesWindowsSigninHelper(platform: PlatformId | null): boolean {
   return platform === "windows";
 }
 

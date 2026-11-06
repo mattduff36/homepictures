@@ -8,6 +8,15 @@ import {
 const cameraUrl = "https://canary-camera.example.ts.net/";
 const healthUrl = "https://canary-camera.example.ts.net/healthz";
 
+test("only the expected HTTP 204 proves health, not an HTML 200 or other 2xx", async () => {
+  for (const status of [200, 201, 202, 206, 301, 401, 404, 503]) {
+    const probe = createCameraHealthProbe(cameraUrl, {
+      fetchImpl: async () => new Response(null, { status }),
+    });
+    assert.equal(await probe.promise, "failed", `HTTP ${status}`);
+  }
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;

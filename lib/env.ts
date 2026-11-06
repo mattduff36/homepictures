@@ -1,13 +1,11 @@
 import "server-only";
 
 import { Buffer } from "node:buffer";
-import { parseCameraUrl } from "./camera-url";
-import { MIN_SESSION_SECRET_BYTES, MIN_SETUP_PASSWORD_LENGTH } from "./constants";
 import {
-  parseSharedLogin,
-  parseTailscaleAuthKey,
-  type SharedLogin,
-} from "./setup-secrets";
+  CAMERA_URL,
+  MIN_SESSION_SECRET_BYTES,
+  MIN_SETUP_PASSWORD_LENGTH,
+} from "./constants";
 
 function readEnv(name: string): string | null {
   const value = process.env[name];
@@ -37,18 +35,6 @@ export function getSessionSecret(): string | null {
   return secret;
 }
 
-export function getCameraUrl(): string | null {
-  return parseCameraUrl(readEnv("CAMERA_URL"));
-}
-
-export function getSharedLogin(): SharedLogin | null {
-  return parseSharedLogin({
-    email: process.env.TAILSCALE_SHARED_LOGIN_EMAIL,
-    password: process.env.TAILSCALE_SHARED_LOGIN_PASSWORD,
-    provider: process.env.TAILSCALE_SHARED_LOGIN_PROVIDER,
-  });
-}
-
-export function getTailscaleAuthKey(): string | null {
-  return parseTailscaleAuthKey(process.env.TAILSCALE_AUTHKEY);
+export function getCameraUrl(): string {
+  return CAMERA_URL;
 }

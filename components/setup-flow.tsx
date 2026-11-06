@@ -5,9 +5,6 @@ import { AndroidLogo } from "@phosphor-icons/react/dist/csr/AndroidLogo";
 import { AppleLogo } from "@phosphor-icons/react/dist/csr/AppleLogo";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { Check } from "@phosphor-icons/react/dist/csr/Check";
-import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
-import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
-import { EyeSlash } from "@phosphor-icons/react/dist/csr/EyeSlash";
 import { LinuxLogo } from "@phosphor-icons/react/dist/csr/LinuxLogo";
 import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
 import { ShieldCheck } from "@phosphor-icons/react/dist/csr/ShieldCheck";
@@ -33,10 +30,6 @@ import {
   writeSetupProgress,
   type SetupProgress,
 } from "@/lib/setup-progress";
-import {
-  SHARED_LOGIN_PROVIDER_LABELS,
-  type SharedLogin,
-} from "@/lib/setup-secrets";
 import { detectPlatform, TAILSCALE_DOWNLOADS, type PlatformId } from "@/lib/platforms";
 import {
   WINDOWS_INSTALLER_FILENAME,
@@ -48,7 +41,6 @@ import {
   WINDOWS_SECONDARY_ACTION,
   WINDOWS_SECONDARY_SUPPORTING,
 } from "@/lib/windows-installer";
-import { WINDOWS_SIGNIN_FILENAME } from "@/lib/windows-signin";
 
 const PLATFORM_LABELS: Record<PlatformId, string> = {
   ios: "iPhone / iPad",
@@ -187,28 +179,12 @@ function useIsClient() {
   );
 }
 
-async function copyText(value: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
   const isClient = useIsClient();
   const [progress, setProgress] = useState<SetupProgress>(DEFAULT_SETUP_PROGRESS);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const [locking, setLocking] = useState(false);
-  const [credentials, setCredentials] = useState<SharedLogin | null>(null);
-  const [credentialsError, setCredentialsError] = useState<string | null>(null);
-  const [credentialsLoading, setCredentialsLoading] = useState(false);
-  const [passwordVisible, setPasswordVisible] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
-  const [helperError, setHelperError] = useState<string | null>(null);
-  const [helperBusy, setHelperBusy] = useState(false);
   const [probe, setProbe] = useState<CameraHealthResult | "checking">("checking");
   const [probeAttempt, setProbeAttempt] = useState(0);
   const [honorExplicitStep, setHonorExplicitStep] = useState(false);
@@ -229,9 +205,6 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
     if (next !== stored) {
       writeSetupProgress(next);
     }
-    if (next.currentStage === 2) {
-      setCredentialsLoading(true);
-    }
   }
 
   function update(partial: Partial<SetupProgress>) {
@@ -246,11 +219,6 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
     const next = completeSetupStage(progress, probe);
     if (next === progress) {
       return;
-    }
-    if (next.currentStage === 2) {
-      setCredentials(null);
-      setCredentialsError(null);
-      setCredentialsLoading(true);
     }
     if (next.currentStage === 3) {
       setProbe("checking");
@@ -300,64 +268,6 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
     setProbe("checking");
     setProbeAttempt((value) => value + 1);
   }
-
-  useEffect(() => {
-    if (progress.currentStage !== 2) {
-      return;
-    }
-
-    let cancelled = false;
-
-    void fetch("/api/setup/credentials", {
-      cache: "no-store",
-      credentials: "same-origin",
-    })
-      .then(async (response) => {
-        if (cancelled) {
-          return;
-        }
-
-        if (response.status === 401) {
-          setCredentials(null);
-          setCredentialsError("Your setup session expired. Lock the page and sign in again.");
-          return;
-        }
-
-        if (!response.ok) {
-          setCredentials(null);
-          setCredentialsError("Sign-in details are temporarily unavailable.");
-          return;
-        }
-
-        const body = (await response.json()) as Partial<SharedLogin>;
-        if (!body.email || !body.password || !body.provider) {
-          setCredentials(null);
-          setCredentialsError("Sign-in details are temporarily unavailable.");
-          return;
-        }
-
-        setCredentials({
-          email: body.email,
-          password: body.password,
-          provider: body.provider,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCredentials(null);
-          setCredentialsError("Unable to load sign-in details. Try again.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setCredentialsLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [progress.currentStage]);
 
   useEffect(() => {
     if (!isClient || !storageLoaded) {
@@ -424,39 +334,6 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
     };
   }, [cameraUrl, honorExplicitStep, progress.currentStage, storageLoaded]);
 
-  async function downloadWindowsHelper() {
-    setHelperBusy(true);
-    setHelperError(null);
-
-    try {
-      const response = await fetch("/api/setup/windows-signin", {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
-
-      if (response.status === 503 || !response.ok) {
-        setHelperError(
-          "The Windows helper is unavailable. Sign in with the shared account below instead.",
-        );
-        return;
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = WINDOWS_SIGNIN_FILENAME;
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setHelperError(
-        "The Windows helper could not be downloaded. Sign in with the shared account below instead.",
-      );
-    } finally {
-      setHelperBusy(false);
-    }
-  }
-
   const stage = progress.currentStage;
   const view = wizardViewFor(platform, stage, probe);
   const title = view.title;
@@ -472,12 +349,10 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
         }
       : stage === 2
         ? {
-            label: "I have signed in",
+            label: "Signed in and invite accepted",
             onClick: completeCurrentStage,
-            disabled: !credentials,
-            hint: credentials
-              ? "Press this after Tailscale shows you are signed in."
-              : "Sign-in details are still loading.",
+            disabled: false,
+            hint: "Press this after signing in and accepting the owner's Dell device invite.",
           }
         : stage === 3
           ? {
@@ -498,11 +373,6 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
 
   function goBack() {
     const previous = (stage - 1) as SetupStage;
-    if (previous === 2) {
-      setCredentials(null);
-      setCredentialsError(null);
-      setCredentialsLoading(true);
-    }
     if (previous === 3) {
       setProbe("checking");
     }
@@ -549,6 +419,18 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
         className={`page-shell grid items-start gap-8 ${PAGE_GUTTER} pt-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-10 xl:grid-cols-[minmax(0,1fr)_22rem] xl:gap-14`}
       >
         <div className="min-w-0">
+          <div className="panel mb-6 p-5 text-sm leading-relaxed text-mute" role="note">
+            <p className="font-medium text-ink">MPDEE Vision has moved to Dell</p>
+            <p className="mt-2">
+              Remove the old Raspberry Pi home-screen shortcut or installed app.
+              Open the new Dell app at{" "}
+              <a className="underline" href={cameraUrl}>{cameraUrl}</a>{" "}
+              and install it again from that address after setup. Old bookmarks
+              must be replaced too. The old shared Google sign-in is disabled;
+              use your own working Tailscale account and ask the owner privately
+              for a Dell-only device share invite.
+            </p>
+          </div>
           <div className="lg:hidden">
             <StageProgress stage={stage} completedUpTo={progress.completedUpTo} />
             <div className="mt-5">
@@ -585,24 +467,7 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
                     />
                   ) : null}
                   {stage === 2 ? (
-                    <SignInStage
-                      view={view}
-                      credentials={credentials}
-                      loading={credentialsLoading}
-                      error={credentialsError}
-                      passwordVisible={passwordVisible}
-                      copied={copied}
-                      helperBusy={helperBusy}
-                      helperError={helperError}
-                      onTogglePassword={() => setPasswordVisible((value) => !value)}
-                      onCopy={async (label, value) => {
-                        const ok = await copyText(value);
-                        if (ok) {
-                          setCopied(label);
-                        }
-                      }}
-                      onDownloadHelper={downloadWindowsHelper}
-                    />
+                    <SignInStage />
                   ) : null}
                   {stage === 3 ? (
                     <VerifyStage
@@ -628,7 +493,17 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
                       </button>
                     </>
                   ) : null}
-                  {stage === 5 ? <HomeScreenStage view={view} /> : null}
+                  {stage === 5 ? (
+                    <>
+                      <p>
+                        Remove the old home-screen shortcut or installed app first.
+                        Install only from the new Dell camera page:{" "}
+                        <a className="underline" href={cameraUrl}>{cameraUrl}</a>.
+                        Do not install this setup website.
+                      </p>
+                      <HomeScreenStage view={view} />
+                    </>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -656,7 +531,7 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
                   sign-in is wrong.
                 </li>
                 <li>Check Tailscale is installed and says Connected.</li>
-                <li>Confirm you signed in with the MPDEE Vision Camera Access account, not your own account.</li>
+                <li>Use your own working Tailscale account and accept the owner&apos;s Dell-only private device share invite with that same account.</li>
                 <li>Return here and press Try again, then Open MPDEE Vision.</li>
                 <li>
                   If your browser asks whether CCTV can access devices on your
@@ -689,7 +564,7 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
             <Disclosure title="Show all instructions">
               <ol className="list-decimal space-y-1 pl-5">
                 <li>Install Tailscale for this device.</li>
-                <li>Sign in with the shared Camera Access account.</li>
+                <li>Sign in with your own Tailscale account and accept the owner&apos;s private Dell-only device invite.</li>
                 <li>Wait until camera access is detected, then press Continue.</li>
                 <li>Open MPDEE Vision.</li>
                 <li>Add the camera page to your home screen or install it.</li>
@@ -831,140 +706,27 @@ function InstallStage({
   );
 }
 
-function SignInStage({
-  view,
-  credentials,
-  loading,
-  error,
-  passwordVisible,
-  copied,
-  helperBusy,
-  helperError,
-  onTogglePassword,
-  onCopy,
-  onDownloadHelper,
-}: {
-  view: WizardView;
-  credentials: SharedLogin | null;
-  loading: boolean;
-  error: string | null;
-  passwordVisible: boolean;
-  copied: string | null;
-  helperBusy: boolean;
-  helperError: string | null;
-  onTogglePassword: () => void;
-  onCopy: (label: string, value: string) => Promise<void>;
-  onDownloadHelper: () => Promise<void>;
-}) {
-  const providerLabel = credentials
-    ? SHARED_LOGIN_PROVIDER_LABELS[credentials.provider]
-    : "your provider";
-
+function SignInStage() {
   return (
     <>
       <p>
-        Sign in to Tailscale with the shared MPDEE Vision {providerLabel}{" "}
-        account shown below. Do not use your own {providerLabel} account.
+        Open Tailscale and sign in with your own working account. If you already
+        have a working Tailscale account on this device, keep using it.
+        On iPhone or iPad, allow the VPN prompt.
       </p>
-      {loading ? <p>Loading sign-in details…</p> : null}
-      {error ? (
-        <p className="text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {credentials ? (
-        <div className="space-y-3 rounded-[var(--radius)] border border-line bg-panel-2 p-4">
-          <p className="font-medium text-ink">
-            Use this MPDEE Vision {providerLabel} account, not your own
-          </p>
-          <CredentialRow
-            label="Email"
-            value={credentials.email}
-            copied={copied === "email"}
-            onCopy={() => onCopy("email", credentials.email)}
-          />
-          <CredentialRow
-            label="Password"
-            value={credentials.password}
-            hidden={!passwordVisible}
-            copied={copied === "password"}
-            onCopy={() => onCopy("password", credentials.password)}
-            extra={
-              <button
-                type="button"
-                className="btn btn-ghost min-h-10 px-3 text-sm"
-                onClick={onTogglePassword}
-              >
-                {passwordVisible ? (
-                  <EyeSlash size={16} weight="regular" aria-hidden="true" />
-                ) : (
-                  <Eye size={16} weight="regular" aria-hidden="true" />
-                )}
-                {passwordVisible ? "Hide" : "Show"}
-              </button>
-            }
-          />
-        </div>
-      ) : null}
-      {view.usesWindowsHelper ? (
-        <div className="space-y-2">
-          <p>
-            On a PC that does not already have a Tailscale account, download
-            the helper and double-click it. This page continues when you come
-            back. Delete the helper after use.
-          </p>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={onDownloadHelper}
-            disabled={helperBusy}
-          >
-            Download Windows sign-in helper
-          </button>
-          {helperError ? (
-            <p className="text-danger" role="alert">
-              {helperError}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+      <ol className="list-decimal space-y-2 pl-5">
+        <li>Ask the owner privately for a device share invite for the Dell camera server only.</li>
+        <li>Open that private invite and accept it while signed in with the same Tailscale account you use on this device.</li>
+        <li>Return to Tailscale and check it says Connected, then continue here.</li>
+      </ol>
+      <p>
+        Do not join the owner&apos;s home tailnet. The invite shares only the Dell
+        camera device, not the home network. No invite or account password is
+        published on this page. The old shared Google identity and automatic
+        Windows sign-in helper are retired. Delete any previously downloaded
+        sign-in helper; do not run it.
+      </p>
     </>
-  );
-}
-
-function CredentialRow({
-  label,
-  value,
-  hidden = false,
-  copied,
-  onCopy,
-  extra,
-}: {
-  label: string;
-  value: string;
-  hidden?: boolean;
-  copied: boolean;
-  onCopy: () => void;
-  extra?: React.ReactNode;
-}) {
-  return (
-    <div>
-      <p className="text-sm font-medium text-ink">{label}</p>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        <code className="min-w-0 grow break-all rounded-[var(--radius)] border border-line bg-panel px-3 py-2 text-ink">
-          {hidden ? "••••••••" : value}
-        </code>
-        <button
-          type="button"
-          className="btn btn-ghost min-h-10 px-3 text-sm"
-          onClick={onCopy}
-        >
-          <Copy size={16} weight="regular" aria-hidden="true" />
-          {copied ? "Copied" : "Copy"}
-        </button>
-        {extra}
-      </div>
-    </div>
   );
 }
 

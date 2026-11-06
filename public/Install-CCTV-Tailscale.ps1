@@ -17,8 +17,9 @@
   https://pkgs.tailscale.com/stable/, verifies the SHA-256 checksum and a
   valid Tailscale Authenticode signature, writes camera-safe machine
   policies, then installs Tailscale. On success it opens the Camera Access
-  setup page and closes. Sign-in stays on the setup wizard. No auth key is
-  used.
+  setup page and closes. Sign in manually to Tailscale with your own working
+  account, then accept the owner's private Dell-only device share invite.
+  No auth key is used.
 
 .NOTES
   Public, auditable script. Safe to read before running.
