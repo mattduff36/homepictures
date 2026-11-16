@@ -42,3 +42,12 @@ Target: zero additional recurring charges within existing Vercel allowance and C
 Sources: https://developers.cloudflare.com/realtime/sfu/platform/pricing/ ; https://developers.cloudflare.com/realtime/turn/generate-credentials/ ; https://tailscale.com/docs/reference/tailscale-cli/funnel ; go2rtc v1.9.14 internal/webrtc/server.go.
 
 Rollback: disable only Funnel port 10000; stop/remove only the new gateway/sidecar; restore previous Vercel deployment. Existing private Serve routes, primary Vision instance, cameras and recordings remain untouched.
+
+## Pilot release checkpoint
+
+- 16 November 2026: Back Garden pilot deployed at https://cctv.mpdee.uk/watch. Application release 077fc78, Vercel deployment dpl_BV1Q8GTzBtKTREKWGGVWVXcdf1Pw. Gateway and sidecar are installed separately on the Dell; Funnel 10000 is enabled only for signed signalling. Existing private routes were preserved and Frigate remained healthy.
+- Offline acceptance: 109 frontend/server tests, 22 Python gateway tests, lint, typecheck and build passed. Live testing found optional TURN transports could remain gathering after relay candidates arrived; bounded fallback and max-bundle fixed startup, with 14 focused player tests and typecheck passing afterward.
+- Live browser acceptance confirmed denied anonymous/cross-origin access, individual login, selected relay candidate, decoded 640x360 video, incoming audio packets, sound toggle, mobile layout without overflow, Stop closing the peer, remembered session and logout. This does not substitute for physical iPhone audio/mobile-network acceptance.
+- Protected operator credentials and redacted live-test evidence are outside Git at D:/_storage/Codex-Documents/2026-11-16/camera-web-access. Passwords, tokens, SDP and private camera screenshots are excluded from the repositories.
+- The 15-minute limit is enforced by the normal client. Issuance limits and revocation prevent further authorisation, but the go2rtc JSON exchange does not provide a handle to force-close an already established malicious peer. This is not a hard billing cap; revisit server-controlled termination before expanding access.
+- **Awaiting owner iPhone confirmation. Phase 2 has not started.**
