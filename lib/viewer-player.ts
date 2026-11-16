@@ -82,7 +82,12 @@ export function waitForGathering(peer: ViewerPeer, signal: AbortSignal, timeoutM
       if (peer.iceGatheringState === "complete") finish();
     };
     const abort = () => finish(new Error("Stopped"));
-    const timer = setTimeout(() => finish(new Error("Connection timed out. Please retry.")), timeoutMs);
+    // Optional TURN transports can remain pending after usable relay candidates arrive.
+    // This exchange is non-trickle: send the bounded gathered offer at the deadline.
+    const timer = setTimeout(() => {
+      const hasRelay = /^a=candidate:.* typ relay(?: |\r?$)/m.test(peer.localDescription?.sdp ?? "");
+      finish(hasRelay ? undefined : new Error("Connection timed out. Please retry."));
+    }, timeoutMs);
     peer.addEventListener("icegatheringstatechange", change);
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort(); else change();
@@ -213,7 +218,7 @@ export class ViewerPlayer {
         if (current()) this.stop("The 15-minute viewing limit was reached. Press Watch to restart.");
       }, Math.min(remaining, this.deps.timing?.playbackMs ?? VIEWER_PLAYBACK_MS));
       const peer = (this.deps.peer ?? ((options) => new RTCPeerConnection(options)))({
-        iceServers: config.iceServers, iceTransportPolicy: "relay",
+        iceServers: config.iceServers, iceTransportPolicy: "relay", bundlePolicy: "max-bundle",
       });
       this.peer = peer;
       const stream = (this.deps.stream ?? (() => new MediaStream()))();

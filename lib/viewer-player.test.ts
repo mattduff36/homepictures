@@ -91,6 +91,7 @@ test("no connection until explicit Watch; peer is relay-only and audio/video are
   assert.equal(f.calls.length, 0);
   await f.player.start();
   assert.equal(f.options?.iceTransportPolicy, "relay");
+  assert.equal(f.options?.bundlePolicy, "max-bundle");
   assert.deepEqual(f.peer.transceivers, [
     { kind: "video", options: { direction: "recvonly" } }, { kind: "audio", options: { direction: "recvonly" } },
   ]);
@@ -213,6 +214,15 @@ test("ICE gathering has a deadline and abort cleanup", async () => {
   const pending = waitForGathering(peer, abort.signal, 1000);
   abort.abort();
   await assert.rejects(pending, /Stopped/);
+});
+
+test("gathering deadline uses an available relay while other transports remain pending", async () => {
+  const peer = new Peer();
+  peer.iceGatheringState = "gathering";
+  peer.localDescription = { sdp: sdp + "a=candidate:1 1 udp 1 1.1.1.1 3478 typ relay\r\n" };
+  await waitForGathering(peer, new AbortController().signal, 5);
+  peer.localDescription = { sdp: sdp + "a=candidate:1 1 udp 1 1.1.1.1 3478 typ srflx\r\n" };
+  await assert.rejects(waitForGathering(peer, new AbortController().signal, 5), /timed out/);
 });
 
 test("diagnostic summary never returns addresses, SDP, candidate IDs or credentials", () => {
