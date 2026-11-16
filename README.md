@@ -1,9 +1,10 @@
 # Home Camera Access
 
-Public onboarding portal for authorised friends and family using MPDEE Vision on
-the Dell camera server, with an optional single-camera `/watch` pilot. It does not
-host or proxy camera media. Existing private access still uses Tailscale; the setup
-password only protects onboarding and **never authorizes the camera pilot**.
+Website camera viewer and private-access onboarding for authorised friends and
+family. `/watch` offers individually authorised Swann/Ring cameras without
+Tailscale or installation. Live media travels through WebRTC/TURN, not Vercel.
+Only small authenticated Ring stills pass through the portal. Existing private
+access still uses Tailscale; the setup password **never authorises viewing**.
 
 ## Dell cutover
 
@@ -15,7 +16,7 @@ Changing the camera address now requires a code change and deployment.
 
 Existing users must remove the old Raspberry Pi home-screen shortcut or installed
 app, replace old bookmarks, and install the app again from the Dell origin.
-Installing this public setup website is not the same as installing MPDEE Vision.
+Adding this public website to Home Screen is separate from installing private MPDEE Vision.
 An existing installation cannot change its origin automatically.
 
 The old shared Google identity is disabled. Each family member must use their
@@ -33,7 +34,7 @@ alone without checking the app's WebRTC/media requirements.
 ## User flow
 
 1. By default `https://cctv.mpdee.uk/` tests the Dell origin's `/healthz`.
-   When the pilot is explicitly enabled, root instead offers Watch Back Garden,
+   When website viewing is explicitly enabled, root primarily offers Watch cameras,
    Open existing private cameras (the same health/countdown flow), and setup.
 2. Only HTTP `204 No Content` counts as successful reachability. Success opens the
    Dell app after the existing short countdown; failure or Cancel opens `/setup`.
@@ -155,19 +156,21 @@ The disabled shared identity must not be reintroduced.
 Login attempts are throttled in memory per serverless instance (about 5 attempts
 per 15 minutes per client IP). This is a speed bump, not distributed lockout.
 
-## Password-protected Back Garden pilot
+## Password-protected website viewer
 
 `/watch` is disabled unless server-only `VIEWER_ENABLED=true`. It uses individual
 username/password accounts checked by a separate Dell Python gateway, never setup
-credentials. The default private gateway and `/setup` remain available. The pilot
-matches the existing dark/green Barlow UI and exposes only Back Garden, not camera
-administration, snapshots, recordings, Ring, or arbitrary upstream requests.
+credentials. Existing private access and `/setup` remain available. The viewer
+matches the dark/green Barlow UI and lists only the account's authorised cameras:
+Back Garden, Front Door, Shed, Front Caravan, Back Door; Ring Doorbell, Front,
+Side, Garden and Back. Camera administration, remote controls, sirens, recordings
+and arbitrary upstream requests remain private. `_Gate`/`_Indoor` are excluded.
 
 Additional **server-only** Vercel configuration:
 
 | Name | Purpose |
 | --- | --- |
-| `VIEWER_ENABLED` | Exactly `true` enables pilot UI/APIs; otherwise closed |
+| `VIEWER_ENABLED` | Exactly `true` enables viewer UI/APIs; otherwise closed |
 | `VIEWER_GATEWAY_ORIGIN` | Must be `https://mpdee-vision.tail03543e.ts.net:10000` |
 | `VIEWER_SHARED_SECRET` | Independent >=32-byte secret shared only with Dell gateway |
 | `CF_TURN_KEY_ID` | Cloudflare Realtime TURN key ID |
@@ -181,8 +184,9 @@ host-only, lasting at most seven days. Full local sign-in needs HTTPS; do not
 weaken cookie security for HTTP development. No viewer secrets go in HTML,
 browser storage, diagnostic summaries or logs.
 
-Only same-origin POST `/api/viewer/{login,session,config,offer,stop,logout}` exists.
+Only same-origin POST `/api/viewer/{login,session,config,offer,poll,heartbeat,snapshot,stop,logout}` exists.
 Unknown actions/fields and user-supplied session/URL/camera overrides are rejected.
+Camera IDs/modes are fixed allowlists, with per-account permission checks on Dell.
 Requests are signed to the fixed Dell path using HMAC-SHA256 over
 `timestamp + "\n" + nonce + "\nPOST\n" + path + "\n" + exact_JSON_body`.
 Dell checks clock/nonce replay and persists authentication/issuance limits in
@@ -201,28 +205,52 @@ candidate**, not page load or signalling success. Diagnostic summaries expose
 only relay confirmation and decoded-frame/audio packet/byte counters, no IP/SDP.
 Audio counters alone do not prove audible sound.
 
-Video starts muted with playsInline; Sound on is explicit. Stop, hidden tab,
-page exit, unmount and logout close the peer and tracks. A 15-minute app timer
-requires explicit restart, and active viewing checks Dell session authorization
-every 60 seconds. Stale async results cannot revive a stopped player; failures
-offer Retry without an automatic retry loop.
+Nothing plays before an explicit Watch/wall action. Group navigation and single
+camera selection preserve one peer/camera; Swann wall uses up to five existing
+SD+audio streams with one sound source. Video starts muted/playsInline; Sound on
+is explicit. Fullscreen supports iPhone native video and standard Fullscreen.
+The manifest reuses the existing icon; Home Screen guidance is inside `/watch`.
+
+All five Ring cameras default to Snapshot. Refresh is explicit, shared/cache
+limited to at most one bridge fetch/camera per60s; no background battery polling.
+Still age/stale/unknown metadata is shown honestly. Timed live lasts up to60s;
+Always is an explicit foreground session up to4min, then Continue is required.
+Data Saver forces Ring Snapshot. Private app preferences are never read/written.
+
+Stop, hidden tab, page exit, offline/online transition, unmount and logout close
+all peers/tracks; restarting after network changes is explicit. Swann has an
+absolute15min budget. Gateway-owned loopback WebSockets **also close actual
+upstream peers**, with45s heartbeat and1s autonomous expiry/revocation cleanup.
+Browser polls remote candidates each second and heartbeats each15s; neither
+extends the absolute budget. Stale async results cannot revive stopped playback.
 
 The separate repository's new `mpdee-vision/backend/web-viewer/README.md` defines
-the exact protocol, private config/user schema, offline Python tests, revocation,
-uninstalled Docker/systemd templates and the parent installation checklist.
+the exact expanded JSON protocol, safe account CLI/config migration, pinned
+dependency and patched sidecar build, Python/actual Pion-WS fixture tests,
+revocation, Docker/systemd templates and parent installation checklist.
 Only new `backend/web-viewer/` and `config/web-viewer/` Vision files are required;
 the existing go2rtc, private Serve and recording configuration must not change.
 
-**Important limits:** durable Dell ceilings are 5 logins/source, 8/user and
-30/global per 15 minutes; 3 remembered sessions/user; 6 config attempts/user/hour;
-1 active lease/user and 2 globally. Offers are single-use within 60 seconds,
-leases expire at 15 minutes, and all signed requests share 120/minute. These
-fixed-window issuance controls are **not provider-enforced bandwidth or spend
-caps**. go2rtc 1.9.14 JSON consumers have no returned deletion handle: the gateway
-cannot forcibly terminate an established malicious peer, recall issued TURN
-credentials, or guarantee zero charges. Stop on exit is best-effort; a lost
-response may retain a lease for up to 15 minutes. Emergency media cutoff is
-stopping only the isolated sidecar, not merely disabling Funnel.
+**Upgrade contract:** retain existing password hashes/secrets. Parent grants
+camera permissions with the private account CLI (`update owner --cameras all`),
+which increments version and requires sign-in again without changing the password.
+Install `websocket-client==1.8.0` in the gateway venv. Build the isolated
+`1.9.14-owned-ws` image; stock go2rtc1.9.14 does not own/close WS consumers.
+The narrowly scoped patch closes actual Pion peers on transport EOF/error; the
+gateway refuses a stock sidecar before sending an offer. Replace/restart only
+the isolated sidecar once to remove old pilot JSON peers. SQLite migration
+preserves sessions/security limits but clears unowned leases; never delete state.
+Systemd LoadCredential account edits require restarting only the gateway.
+Portal and gateway are a coordinated protocol upgrade.
+
+**Important limits:** login5/source,8/user,30global per15min;3 remembered7day
+sessions/user; config120/user/hour (Ring additionally30). Swann5/user/session,
+10global; Ring1/user,2global. Offers single-use within60s; unoffered leases
+expire after60s, offered heartbeats after45s; all signed requests1800/minute.
+Snapshots<=750KB JPEG, private/no-store. These are **not provider-enforced
+bandwidth or spend caps**: issued TURN credentials cannot be recalled and
+camera-peer closure does not revoke arbitrary TURN allocations or guarantee
+zero charges. Emergency cutoff stops the isolated gateway/sidecar, not just Funnel.
 
 Parent must verify Cloudflare account activation, account-wide allowance/spend
 controls and Funnel entitlement, then install/deploy through the owner's release
@@ -230,7 +258,8 @@ process. No runtime installation, provider activation or publication is implied
 by these files. Real iPhone Safari testing over mobile data with Tailscale off
 must prove relay selection, advancing decoded camera frames, audible sound,
 Stop/hidden/logout traffic cleanup, bounded Dell load and unchanged original
-Vision/Frigate. **Stop expansion until the owner confirms Back Garden works.**
+Vision/Frigate. Owner confirmed the pilot before authorising this local Phase2
+work; production release and ten-camera live acceptance remain parent-owned.
 
 ## Device acceptance
 

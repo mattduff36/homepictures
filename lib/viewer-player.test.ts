@@ -3,9 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import {
-  summarizeStats, ViewerApiError, ViewerPlayer, waitForGathering, type PlayerState, type VideoSink, type ViewerPeer,
+  fullscreenVideo, summarizeStats, ViewerApiError, ViewerFleet, ViewerPlayer, waitForGathering,
+  type PlayerState, type VideoSink, type ViewerPeer,
 } from "./viewer-player";
-import { VIEWER_CAMERA } from "./viewer-protocol";
+import { VIEWER_CAMERA, VIEWER_CAMERAS, type CameraId } from "./viewer-protocol";
 import { buildContentSecurityPolicy, shouldDisableStore } from "./security-headers";
 
 const sdp = "v=0\r\ns=test\r\n";
@@ -46,12 +47,14 @@ class Peer extends EventTarget implements ViewerPeer {
   async createOffer() { return { type: "offer" as const, sdp }; }
   async setLocalDescription(description: RTCSessionDescriptionInit) { this.localDescription = { sdp: description.sdp! }; }
   async setRemoteDescription(description: RTCSessionDescriptionInit) { this.remote.push(description); }
+  candidates: RTCIceCandidateInit[] = [];
+  async addIceCandidate(candidate: RTCIceCandidateInit) { this.candidates.push(candidate); }
   async getStats() { return stats(this.frames, this.relay); }
   close() { this.closed = true; }
 }
 const players: ViewerPlayer[] = [];
 afterEach(() => { for (const player of players.splice(0)) player.stop(); });
-function fixture(apiOverride?: (action: string) => Promise<unknown>,
+function fixture(apiOverride?: (action: string, body: Record<string, unknown>) => Promise<unknown>,
   timing: { statsMs: number; startupMs: number; playbackMs: number; gatheringMs: number; sessionMs?: number } =
     { statsMs: 5, startupMs: 500, playbackMs: 1000, gatheringMs: 20 }) {
   let peer = new Peer();
@@ -71,10 +74,11 @@ function fixture(apiOverride?: (action: string) => Promise<unknown>,
     video: () => video, update: (state) => states.push(state),
     api: async (action, body) => {
       calls.push({ action, body });
-      if (apiOverride) return apiOverride(action);
-      if (action === "config") return { lease, camera: VIEWER_CAMERA, expires: Math.floor(Date.now() / 1000) + 900,
+      if (apiOverride) return apiOverride(action, body);
+      if (action === "config") return { lease, camera: body.camera, expires: Math.floor(Date.now() / 1000) + 900,
         iceServers: [{ urls: ["turn:turn.cloudflare.com:3478"], username: "short", credential: "temporary" }] };
       if (action === "offer") return { type: "answer", sdp };
+      if (action === "poll") return { events: [], closed: false };
       return { ok: true };
     },
     peer: (config) => { options = config; if (peer.closed) peer = new Peer(); return peer; },
@@ -170,6 +174,7 @@ test("explicit Retry waits for Stop and ignores an earlier release error", async
   const f = fixture(async (action) => {
     if (action === "config") return { lease, camera: VIEWER_CAMERA, expires: Date.now() / 1000 + 900, iceServers: [] };
     if (action === "offer") return { type: "answer", sdp };
+    if (action === "poll") return { events: [], closed: false };
     return released.promise;
   });
   await f.player.start();
@@ -247,7 +252,8 @@ test("revocation or unavailable authority during playback stops without repeated
   const f = fixture(async (action) => {
     if (action === "config") return { lease, camera: VIEWER_CAMERA, expires: Date.now() / 1000 + 900, iceServers: [] };
     if (action === "offer") return { type: "answer", sdp };
-    if (action === "session") {
+    if (action === "poll") return { events: [], closed: false };
+    if (action === "heartbeat") {
       ++checks;
       throw new ViewerApiError(401, "revoked");
     }
@@ -267,10 +273,124 @@ test("watch component wires hidden/page-exit/unmount/logout cleanup and requests
   assert.match(component, /document\.addEventListener\("visibilitychange", visibility\)/);
   assert.match(component, /if \(document\.hidden\) stop\(\)/);
   assert.match(component, /window\.addEventListener\("pagehide", stop\)/);
-  assert.match(component, /instance\.stop\(\)/);
+  assert.match(component, /fleet\.stop\(/);
   assert.match(component, /player\.current\?\.stop\(\)/);
   assert.match(component, /muted autoPlay playsInline/);
   assert.doesNotMatch(source + component, /getUserMedia|getDisplayMedia|new WebSocket|localStorage/);
   assert.equal(shouldDisableStore("/watch"), true);
   assert.match(buildContentSecurityPolicy("nonce", false), /media-src 'self' blob:/);
+});
+
+test("five-camera wall creates only five peers; selecting one retains it and stops four", async () => {
+  const fleet = new ViewerFleet();
+  const fixtures = VIEWER_CAMERAS.filter((camera) => camera.kind === "swann").map((camera) => {
+    const f = fixture();
+    fleet.register(camera.id, f.player);
+    return f;
+  });
+  const swann = VIEWER_CAMERAS.filter((camera) => camera.kind === "swann");
+  await fleet.watch(swann);
+  assert.equal(fixtures.filter((f) => !f.peer.closed).length, 5);
+  await fleet.watch([swann[0]]);
+  assert.equal(fixtures.filter((f) => !f.peer.closed).length, 1);
+  assert.equal(fixtures[0].calls.filter((call) => call.action === "offer").length, 1);
+  fleet.stop();
+  assert.ok(fixtures.every((f) => f.peer.closed));
+});
+
+test("fleet keeps only one audio source and rejects mixed Ring walls", async () => {
+  const fleet = new ViewerFleet();
+  const a = fixture(), b = fixture();
+  fleet.register("back-garden", a.player);
+  fleet.register("front-door", b.player);
+  await fleet.watch([VIEWER_CAMERAS[0], VIEWER_CAMERAS[1]]);
+  a.peer.frames = b.peer.frames = 2;
+  await pause();
+  a.peer.frames = b.peer.frames = 5;
+  await pause();
+  await fleet.sound("back-garden");
+  assert.equal(a.video.muted, false);
+  await fleet.sound("front-door");
+  assert.equal(a.video.muted, true);
+  assert.equal(b.video.muted, false);
+  await assert.rejects(fleet.watch([VIEWER_CAMERAS[0], VIEWER_CAMERAS[5]]), /one camera/);
+});
+
+test("switching waits for upstream Stop; Stop while waiting cannot start a stale selection", async () => {
+  const fleet = new ViewerFleet();
+  const release = deferred<unknown>();
+  const a = fixture(async (action) => {
+    if (action === "config") return { lease, camera: VIEWER_CAMERA, expires: Date.now() / 1000 + 900, iceServers: [] };
+    if (action === "offer") return { type: "answer", sdp };
+    if (action === "poll") return { events: [], closed: false };
+    return release.promise;
+  });
+  const b = fixture();
+  fleet.register("back-garden", a.player);
+  fleet.register("front-door", b.player);
+  await fleet.watch([VIEWER_CAMERAS[0]]);
+  const pending = fleet.watch([VIEWER_CAMERAS[1]]);
+  await Promise.resolve();
+  assert.equal(b.calls.length, 0);
+  fleet.stop();
+  release.resolve({ ok: true });
+  await pending;
+  assert.equal(b.calls.length, 0);
+});
+
+test("Ring modes use their own camera and finite lease; candidates are safely polled", async () => {
+  const candidate = { candidate: "candidate:1 1 udp 1 1.1.1.1 3478 typ relay", sdpMLineIndex: 0 };
+  for (const mode of ["timed", "always"] as const) {
+    const f = fixture(async (action, body) => {
+      if (action === "config") return { lease, camera: body.camera, expires: Date.now() / 1000 + 0.04, iceServers: [] };
+      if (action === "offer") return { type: "answer", sdp };
+      if (action === "poll") return { events: [candidate], closed: false };
+      return { ok: true };
+    });
+    await f.player.start("ring-doorbell", mode, "Doorbell");
+    assert.deepEqual(f.calls[0].body, { camera: "ring-doorbell", mode });
+    assert.deepEqual(f.peer.candidates, [candidate]);
+    await pause(70);
+    assert.equal(f.peer.closed, true);
+    assert.match(f.states.at(-1)!.message, mode === "timed" ? /Snapshot mode/ : /Continue live/);
+    assert.equal(f.calls.filter((c) => c.action === "config").length, 1);
+  }
+});
+
+test("late candidates after Stop never reach a closed peer", async () => {
+  const pending = deferred<unknown>();
+  const f = fixture(async (action) => {
+    if (action === "config") return { lease, camera: VIEWER_CAMERA, expires: Date.now() / 1000 + 900, iceServers: [] };
+    if (action === "offer") return { type: "answer", sdp };
+    if (action === "poll") return pending.promise;
+    return { ok: true };
+  });
+  const start = f.player.start();
+  await pause(1);
+  f.player.stop();
+  pending.resolve({ events: [{ candidate: "candidate:test", sdpMLineIndex: 0 }], closed: false });
+  await start;
+  assert.deepEqual(f.peer.candidates, []);
+});
+
+test("iPhone native video fullscreen fallback and standard fullscreen are supported", async () => {
+  let native = 0, standard = 0;
+  await fullscreenVideo({ webkitEnterFullscreen() { ++native; } } as unknown as HTMLVideoElement);
+  await fullscreenVideo({ async requestFullscreen() { ++standard; } } as unknown as HTMLVideoElement);
+  assert.equal(native, 1);
+  assert.equal(standard, 1);
+  await assert.rejects(fullscreenVideo({} as HTMLVideoElement), /unavailable/);
+});
+
+test("all five Ring tiles default to Snapshot; Data Saver and snapshots never background-poll", () => {
+  const component = readFileSync(join(process.cwd(), "components", "camera-viewer.tsx"), "utf8");
+  assert.equal(VIEWER_CAMERAS.filter((c) => c.kind === "ring").length, 5);
+  assert.match(component, /useState<RingPolicy>\("snapshot"\)/);
+  assert.match(component, /dataSaver \? "snapshot" : policy/);
+  assert.match(component, /"offline", stop/);
+  assert.match(component, /"online", stop/);
+  assert.match(component, /generation !== snapshotGeneration\.current \|\| document\.hidden/);
+  assert.equal((component.match(/viewerApi\("snapshot"/g) ?? []).length, 1);
+  assert.doesNotMatch(component, /setInterval\([^;]*refreshSnapshot/);
+  assert.ok(VIEWER_CAMERAS.every((camera) => camera.id !== ("_Gate" as CameraId)));
 });

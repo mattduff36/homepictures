@@ -12,6 +12,7 @@ const barlow = Barlow({
 export const metadata: Metadata = {
   title: "Home Camera Access",
   description: "Private authorised access only.",
+  appleWebApp: { capable: true, title: "MPDEE Vision", statusBarStyle: "black-translucent" },
   robots: {
     index: false,
     follow: false,

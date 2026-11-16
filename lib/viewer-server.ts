@@ -3,8 +3,10 @@ import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { hasJsonContentType } from "./request";
 import {
-  exactFields, isRecord, isSdp, isViewerToken, VIEWER_ACTIONS, VIEWER_CAMERA,
+  exactFields, isRecord, isSdp, isViewerToken, isCameraId, isLiveMode, validCameras, validPoll,
+  validSnapshot, VIEWER_ACTIONS,
   VIEWER_COOKIE, VIEWER_GATEWAY_ORIGIN, VIEWER_MAX_JSON, VIEWER_SESSION_SECONDS,
+  VIEWER_MAX_SNAPSHOT_JSON,
   type ViewerAction,
 } from "./viewer-protocol";
 
@@ -113,7 +115,7 @@ async function gateway(
       throw new ViewerError([400, 401, 403, 413, 429].includes(response.status) ? response.status : 502,
         "viewer_gateway_denied");
     }
-    return await boundedJson(response);
+    return await boundedJson(response, action === "snapshot" ? VIEWER_MAX_SNAPSHOT_JSON : VIEWER_MAX_JSON);
   } catch (error) {
     if (error instanceof ViewerError) throw error;
     throw new ViewerError(502, "viewer_gateway_unavailable");
@@ -218,25 +220,32 @@ export async function handleViewerRequest(
     }
     const session = cookieSession(request);
     if (action === "offer") {
-      if (!exactFields(body, ["camera", "lease", "sdp"]) || body.camera !== VIEWER_CAMERA ||
+      if (!exactFields(body, ["camera", "lease", "sdp"]) || !isCameraId(body.camera) ||
           !isViewerToken(body.lease) || !isSdp(body.sdp)) {
         throw new ViewerError(400, "viewer_invalid_offer");
       }
-    } else if (action === "stop") {
+    } else if (action === "stop" || action === "poll" || action === "heartbeat") {
       if (!exactFields(body, ["lease"]) || !isViewerToken(body.lease)) {
         throw new ViewerError(400, "viewer_invalid_lease");
+      }
+    } else if (action === "config") {
+      if (!exactFields(body, ["camera", "mode"]) || !isCameraId(body.camera) ||
+          !isLiveMode(body.camera, body.mode)) {
+        throw new ViewerError(400, "viewer_invalid_camera");
+      }
+    } else if (action === "snapshot") {
+      if (!exactFields(body, ["camera"]) || !isCameraId(body.camera) || !body.camera.startsWith("ring-")) {
+        throw new ViewerError(400, "viewer_invalid_camera");
       }
     } else if (!exactFields(body, [])) {
       throw new ViewerError(400, "viewer_unexpected_fields");
     }
     if (!isRecord(body)) throw new ViewerError(400, "viewer_invalid_json");
     clear = action === "logout";
-    const value = await gateway(action, {
-      ...body, session, ...(action === "config" ? { camera: VIEWER_CAMERA } : {}),
-    }, fetchImpl);
+    const value = await gateway(action, { ...body, session }, fetchImpl);
     if (action === "config") {
       if (!exactFields(value, ["lease", "expires", "camera"]) || !isViewerToken(value.lease) ||
-          value.camera !== VIEWER_CAMERA || typeof value.expires !== "number" ||
+          value.camera !== body.camera || typeof value.expires !== "number" ||
           !Number.isInteger(value.expires) || value.expires <= Date.now() / 1000 ||
           value.expires > Math.floor(Date.now() / 1000) + 900) {
         throw new ViewerError(502, "viewer_invalid_response");
@@ -260,10 +269,21 @@ export async function handleViewerRequest(
       return json(value);
     }
     if (action === "session") {
-      if (!exactFields(value, ["username", "camera", "expires"]) ||
+      if (!exactFields(value, ["username", "cameras", "expires"]) ||
           typeof value.username !== "string" || !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(value.username) ||
-          value.camera !== VIEWER_CAMERA || typeof value.expires !== "number" ||
-          value.expires <= Date.now() / 1000) {
+          !validCameras(value.cameras) || !Number.isInteger(value.expires) ||
+          Number(value.expires) <= Date.now() / 1000 ||
+          Number(value.expires) > Date.now() / 1000 + VIEWER_SESSION_SECONDS) {
+        throw new ViewerError(502, "viewer_invalid_response");
+      }
+      return json(value);
+    }
+    if (action === "poll") {
+      if (!validPoll(value)) throw new ViewerError(502, "viewer_invalid_response");
+      return json(value);
+    }
+    if (action === "snapshot") {
+      if (!validSnapshot(value) || value.camera !== body.camera) {
         throw new ViewerError(502, "viewer_invalid_response");
       }
       return json(value);

@@ -1,5 +1,6 @@
 import {
-  exactFields, isRecord, isSdp, isViewerToken, VIEWER_CAMERA, VIEWER_PLAYBACK_MS,
+  exactFields, isSdp, isViewerToken, validCameras, validPoll, VIEWER_CAMERA, VIEWER_PLAYBACK_MS,
+  type CameraId, type LiveMode, type ViewerCamera,
 } from "./viewer-protocol";
 
 export type PlayerStatus = "idle" | "connecting" | "playing" | "stopped" | "error";
@@ -20,7 +21,8 @@ type PlayerDependencies = {
   peer?: (config: RTCConfiguration) => ViewerPeer;
   stream?: () => MediaStream;
   sessionExpired?: () => void;
-  timing?: { statsMs?: number; startupMs?: number; playbackMs?: number; gatheringMs?: number; sessionMs?: number };
+  timing?: { statsMs?: number; startupMs?: number; playbackMs?: number; gatheringMs?: number;
+    sessionMs?: number; signallingMs?: number };
 };
 export interface ViewerPeer {
   iceGatheringState: RTCIceGatheringState;
@@ -36,6 +38,7 @@ export interface ViewerPeer {
   createOffer(): Promise<RTCSessionDescriptionInit>;
   setLocalDescription(description: RTCSessionDescriptionInit): Promise<void>;
   setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void>;
+  addIceCandidate(candidate: RTCIceCandidateInit): Promise<void>;
   getStats(): Promise<RTCStatsReport>;
   close(): void;
 }
@@ -130,9 +133,13 @@ export class ViewerPlayer {
   private lease: string | null = null;
   private statsTimer?: ReturnType<typeof setInterval>;
   private sessionTimer?: ReturnType<typeof setInterval>;
+  private signallingTimer?: ReturnType<typeof setInterval>;
   private startupTimer?: ReturnType<typeof setTimeout>;
   private limitTimer?: ReturnType<typeof setTimeout>;
   private polling = false;
+  private signalling = false;
+  private heartbeating = false;
+  private label = "Back Garden";
   private previousFrames = 0;
   private lastFrameAt = 0;
   private releasePending: Promise<void> = Promise.resolve();
@@ -151,6 +158,7 @@ export class ViewerPlayer {
     this.abort = null;
     clearInterval(this.statsTimer);
     clearInterval(this.sessionTimer);
+    clearInterval(this.signallingTimer);
     clearTimeout(this.startupTimer);
     clearTimeout(this.limitTimer);
     this.peer?.close();
@@ -180,7 +188,20 @@ export class ViewerPlayer {
     }
   }
 
-  async start() {
+  get active() {
+    return this.state.status === "playing" || this.state.status === "connecting";
+  }
+  waitForRelease() {
+    return this.releasePending;
+  }
+
+  mute() {
+    const video = this.deps.video();
+    if (video) video.muted = true;
+    this.publish({ muted: true });
+  }
+
+  async start(camera: CameraId = VIEWER_CAMERA, mode: LiveMode = "live", label = "Back Garden") {
     this.stop("", "idle");
     const generation = this.generation;
     const current = () => generation === this.generation;
@@ -189,20 +210,27 @@ export class ViewerPlayer {
     this.previousFrames = 0;
     this.lastFrameAt = Date.now();
     this.polling = false;
-    this.publish({ status: "connecting", message: "Connecting to Back Garden...", muted: true,
+    this.signalling = false;
+    this.heartbeating = false;
+    this.label = label;
+    const limitMessage = camera.startsWith("ring-")
+      ? (mode === "timed" ? "Timed live ended. Snapshot mode; refresh the still when needed."
+        : "Live budget ended. Press Continue live for another foreground session.")
+      : "The 15-minute viewing limit was reached. Press Watch to restart.";
+    this.publish({ status: "connecting", message: `Connecting to ${label}...`, muted: true,
       diagnostics: { ...EMPTY_DIAGNOSTICS } });
     this.startupTimer = setTimeout(() => {
       if (current()) this.stop("No moving picture received. Please retry.", "error");
     }, this.deps.timing?.startupMs ?? 35000);
     this.limitTimer = setTimeout(() => {
-      if (current()) this.stop("The 15-minute viewing limit was reached. Press Watch to restart.");
+      if (current()) this.stop(limitMessage);
     }, this.deps.timing?.playbackMs ?? VIEWER_PLAYBACK_MS);
     try {
       await this.releasePending;
       if (!current()) return;
-      const config = await this.deps.api("config", {}, abort.signal);
+      const config = await this.deps.api("config", { camera, mode }, abort.signal);
       if (!exactFields(config, ["lease", "camera", "expires", "iceServers"]) ||
-          !isViewerToken(config.lease) || config.camera !== VIEWER_CAMERA ||
+          !isViewerToken(config.lease) || config.camera !== camera ||
           !Array.isArray(config.iceServers) || typeof config.expires !== "number") {
         throw new Error("The camera is unavailable. Please retry.");
       }
@@ -215,7 +243,7 @@ export class ViewerPlayer {
       if (remaining <= 0) throw new Error("Please retry.");
       clearTimeout(this.limitTimer);
       this.limitTimer = setTimeout(() => {
-        if (current()) this.stop("The 15-minute viewing limit was reached. Press Watch to restart.");
+        if (current()) this.stop(limitMessage);
       }, Math.min(remaining, this.deps.timing?.playbackMs ?? VIEWER_PLAYBACK_MS));
       const peer = (this.deps.peer ?? ((options) => new RTCPeerConnection(options)))({
         iceServers: config.iceServers, iceTransportPolicy: "relay", bundlePolicy: "max-bundle",
@@ -252,7 +280,7 @@ export class ViewerPlayer {
       if (!current()) return;
       const sdp = peer.localDescription?.sdp;
       if (!isSdp(sdp)) throw new Error("Connection could not start. Please retry.");
-      const answer = await this.deps.api("offer", { camera: VIEWER_CAMERA, lease: this.lease, sdp }, abort.signal);
+      const answer = await this.deps.api("offer", { camera, lease: this.lease, sdp }, abort.signal);
       if (!current()) return;
       if (!exactFields(answer, ["type", "sdp"]) || answer.type !== "answer" || !isSdp(answer.sdp)) {
         throw new Error("Connection could not start. Please retry.");
@@ -262,8 +290,12 @@ export class ViewerPlayer {
       this.statsTimer = setInterval(() => { void this.poll(generation, peer); },
         this.deps.timing?.statsMs ?? 1000);
       this.sessionTimer = setInterval(() => {
-        void this.checkSession(generation, abort.signal);
-      }, this.deps.timing?.sessionMs ?? 60000);
+        void this.heartbeat(generation, abort.signal);
+      }, this.deps.timing?.sessionMs ?? 15000);
+      this.signallingTimer = setInterval(() => {
+        void this.signals(generation, peer, abort.signal);
+      }, this.deps.timing?.signallingMs ?? 1000);
+      await this.signals(generation, peer, abort.signal);
     } catch (error) {
       if (current()) {
         this.stop(error instanceof Error ? error.message : "Please retry.", "error");
@@ -272,15 +304,40 @@ export class ViewerPlayer {
     }
   }
 
-  private async checkSession(generation: number, signal: AbortSignal) {
+  private async heartbeat(generation: number, signal: AbortSignal) {
+    if (this.heartbeating || generation !== this.generation) return;
+    this.heartbeating = true;
     try {
-      const session = await this.deps.api("session", {}, signal);
-      if (!validSession(session)) throw new Error("Sign-in could not be checked.");
+      const value = await this.deps.api("heartbeat", { lease: this.lease }, signal);
+      if (!exactFields(value, ["ok"]) || value.ok !== true) throw new Error("Sign-in could not be checked.");
     } catch (error) {
       if (generation === this.generation) {
         this.stop("Sign-in could not be confirmed. Please sign in again or retry.", "error");
         if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
       }
+    } finally {
+      if (generation === this.generation) this.heartbeating = false;
+    }
+  }
+
+  private async signals(generation: number, peer: ViewerPeer, signal: AbortSignal) {
+    if (this.signalling || generation !== this.generation) return;
+    this.signalling = true;
+    try {
+      const value = await this.deps.api("poll", { lease: this.lease }, signal);
+      if (generation !== this.generation) return;
+      if (!validPoll(value) || value.closed) throw new Error("The camera connection ended. Please retry.");
+      for (const event of value.events) {
+        if (generation !== this.generation) return;
+        await peer.addIceCandidate(event);
+      }
+    } catch (error) {
+      if (generation === this.generation) {
+        this.stop("The camera connection ended. Please retry.", "error");
+        if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
+      }
+    } finally {
+      if (generation === this.generation) this.signalling = false;
     }
   }
 
@@ -298,7 +355,7 @@ export class ViewerPlayer {
       this.publish({ diagnostics });
       if (playing) {
         clearTimeout(this.startupTimer);
-        this.publish({ status: "playing", message: "Playing Back Garden" });
+        this.publish({ status: "playing", message: `LIVE - ${this.label}` });
       } else if (this.state.status === "playing" && Date.now() - this.lastFrameAt > 8000) {
         this.stop("The picture stopped updating. Please retry.", "error");
       }
@@ -325,6 +382,59 @@ export class ViewerPlayer {
   }
 }
 
-export function validSession(value: unknown): value is { username: string } {
-  return isRecord(value) && typeof value.username === "string";
+export function validSession(value: unknown): value is { username: string; cameras: ViewerCamera[]; expires: number } {
+  return exactFields(value, ["username", "cameras", "expires"]) &&
+    typeof value.username === "string" && validCameras(value.cameras) &&
+    typeof value.expires === "number" && value.expires > Date.now() / 1000;
+}
+
+export class ViewerFleet {
+  private players = new Map<CameraId, ViewerPlayer>();
+  private generation = 0;
+  register(camera: CameraId, player: ViewerPlayer) {
+    this.players.get(camera)?.stop();
+    this.players.set(camera, player);
+    return () => {
+      player.stop();
+      if (this.players.get(camera) === player) this.players.delete(camera);
+    };
+  }
+  stop(message?: string) {
+    ++this.generation;
+    for (const player of this.players.values()) player.stop(message);
+  }
+  retain(camera: CameraId) {
+    ++this.generation;
+    for (const [id, player] of this.players) if (id !== camera) player.stop();
+  }
+  async watch(cameras: ViewerCamera[], mode: LiveMode = "live") {
+    if (!cameras.length || cameras.length > 5 || new Set(cameras.map((c) => c.id)).size !== cameras.length ||
+        (cameras.some((c) => c.kind === "ring") && cameras.length !== 1)) {
+      throw new Error("Choose one camera or the Swann wall.");
+    }
+    const generation = ++this.generation;
+    const wanted = new Set(cameras.map((c) => c.id));
+    for (const [id, player] of this.players) if (!wanted.has(id)) player.stop();
+    await Promise.all([...this.players.values()].map((player) => player.waitForRelease()));
+    if (generation !== this.generation) return;
+    await Promise.all(cameras.map((camera) => {
+      const player = this.players.get(camera.id);
+      return player?.active ? undefined : player?.start(camera.id, mode, camera.label);
+    }));
+  }
+  async sound(camera: CameraId) {
+    for (const [id, player] of this.players) if (id !== camera) player.mute();
+    await this.players.get(camera)?.toggleSound();
+  }
+}
+
+export async function fullscreenVideo(video: HTMLVideoElement) {
+  const ios = video as HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+  if (typeof ios.webkitEnterFullscreen === "function") {
+    ios.webkitEnterFullscreen();
+  } else if (video.requestFullscreen) {
+    await video.requestFullscreen();
+  } else {
+    throw new Error("Fullscreen is unavailable in this browser.");
+  }
 }

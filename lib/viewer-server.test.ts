@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, test } from "node:test";
 import { boundedJson, gatewaySignature, handleViewerRequest, viewerSameOrigin, viewerSource } from "./viewer-server";
-import { VIEWER_CAMERA, VIEWER_COOKIE, VIEWER_GATEWAY_ORIGIN } from "./viewer-protocol";
+import { VIEWER_CAMERA, VIEWER_CAMERAS, VIEWER_COOKIE, VIEWER_GATEWAY_ORIGIN } from "./viewer-protocol";
 
 const secret = "test-shared-secret-" + "s".repeat(32);
 const session = "s".repeat(43);
 const lease = "l".repeat(43);
+const live = { camera: VIEWER_CAMERA, mode: "live" };
 const envKeys = ["VIEWER_ENABLED", "VIEWER_SHARED_SECRET", "VIEWER_GATEWAY_ORIGIN",
   "CF_TURN_KEY_ID", "CF_TURN_API_TOKEN", "VERCEL", "NODE_ENV"] as const;
 const original = new Map(envKeys.map((key) => [key, process.env[key]]));
@@ -121,7 +122,7 @@ test("Dell authorization precedes TURN issuance and only filtered short-lived cr
   const fetchImpl: typeof fetch = async (url, init) => {
     calls.push(String(url));
     if (calls.length === 1) {
-      assert.deepEqual(JSON.parse(String(init?.body)), { session, camera: VIEWER_CAMERA });
+      assert.deepEqual(JSON.parse(String(init?.body)), { session, ...live });
       return response({ lease, expires: Math.floor(Date.now() / 1000) + 900, camera: VIEWER_CAMERA });
     }
     assert.match(String(url), /^https:\/\/rtc.live.cloudflare.com\/v1\/turn\/keys\/test-key\//);
@@ -133,7 +134,7 @@ test("Dell authorization precedes TURN issuance and only filtered short-lived cr
         username: "short-lived", credential: "temporary" },
     ] });
   };
-  const result = await handleViewerRequest(request(), "config", fetchImpl);
+  const result = await handleViewerRequest(request(live), "config", fetchImpl);
   assert.equal(result.status, 200);
   const text = await result.text();
   assert.doesNotMatch(text, /test-provider-token|test-key|evil|stun:|ssssssss/);
@@ -146,7 +147,7 @@ test("Dell authorization precedes TURN issuance and only filtered short-lived cr
 test("revoked session and rate limits never request TURN credentials", async () => {
   for (const status of [401, 403, 429]) {
     let calls = 0;
-    const result = await handleViewerRequest(request(), "config", async () => {
+    const result = await handleViewerRequest(request(live), "config", async () => {
       ++calls;
       return response({ error: "sensitive backend text" }, status);
     });
@@ -158,7 +159,7 @@ test("revoked session and rate limits never request TURN credentials", async () 
 
 test("TURN failure releases reservation and returns only a generic error", async () => {
   const paths: string[] = [];
-  const result = await handleViewerRequest(request(), "config", async (url) => {
+  const result = await handleViewerRequest(request(live), "config", async (url) => {
     paths.push(String(url));
     if (paths.length === 1) return response({ lease, camera: VIEWER_CAMERA, expires: Math.floor(Date.now() / 1000) + 900 });
     if (paths.length === 2) return response({ error: "provider details" }, 500);
@@ -170,7 +171,7 @@ test("TURN failure releases reservation and returns only a generic error", async
 });
 
 test("invalid, oversized and unexpected inputs cannot reach upstream", async () => {
-  for (const body of [{ camera: "front-door", lease, sdp: "v=0\r\n" },
+  for (const body of [{ camera: "_Gate", lease, sdp: "v=0\r\n" },
     { camera: VIEWER_CAMERA, lease, sdp: "v=0\r\n", url: "http://localhost" },
     { camera: VIEWER_CAMERA, lease, sdp: "v=0\r\n" + "x".repeat(48000) }]) {
     assert.equal((await handleViewerRequest(request(body), "offer", noFetch)).status, 400);
@@ -193,7 +194,7 @@ test("a stalled JSON body hits its actual read deadline and cancels the stream",
 test("malformed TURN credentials fail closed and release the Dell reservation", async () => {
   for (const credential of ["", null]) {
     let calls = 0;
-    const result = await handleViewerRequest(request(), "config", async () => {
+    const result = await handleViewerRequest(request(live), "config", async () => {
       ++calls;
       if (calls === 1) return response({ lease, camera: VIEWER_CAMERA, expires: Math.floor(Date.now() / 1000) + 900 });
       if (calls === 2) return response({ iceServers: [{
@@ -201,8 +202,33 @@ test("malformed TURN credentials fail closed and release the Dell reservation", 
       }] });
       return response({ ok: true });
     });
+
     assert.equal(result.status, 502);
     assert.equal(calls, 3);
+  }
+});
+
+test("camera list, JSON polls, heartbeat and private snapshots are strictly validated", async () => {
+  const cameras = await handleViewerRequest(request(), "session", async () =>
+    response({ username: "owner", cameras: VIEWER_CAMERAS, expires: Math.floor(Date.now() / 1000) + 604799 }));
+  assert.equal(cameras.status, 200);
+  const poll = await handleViewerRequest(request({ lease }), "poll", async (_url, init) => {
+    assert.deepEqual(JSON.parse(String(init?.body)), { session, lease });
+    return response({ events: [{ candidate: "candidate:test", sdpMLineIndex: 0 }], closed: false });
+  });
+  assert.equal(poll.status, 200);
+  for (const body of [{ camera: "_Indoor" }, { camera: "back-garden" },
+    { camera: "ring-back", url: "http://localhost" }]) {
+    assert.equal((await handleViewerRequest(request(body), "snapshot", noFetch)).status, 400);
+  }
+  const still = await handleViewerRequest(request({ camera: "ring-back" }), "snapshot", async () =>
+    response({ camera: "ring-back", image: "/9j/2Q==", capturedAt: null, stale: true }));
+  assert.equal(still.status, 200);
+  assert.equal(still.headers.get("Cache-Control"), "private, no-store");
+  assert.equal((await handleViewerRequest(request({ lease }), "poll", async () =>
+    response({ events: [{ candidate: "bad", sdpMLineIndex: 9 }], closed: false }))).status, 502);
+  for (const body of [{ camera: "ring-back", mode: "live" }, { camera: VIEWER_CAMERA, mode: "always" }, {}]) {
+    assert.equal((await handleViewerRequest(request(body), "config", noFetch)).status, 400);
   }
 });
 

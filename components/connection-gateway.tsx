@@ -47,8 +47,8 @@ export function ConnectionGateway({ cameraUrl, pilotEnabled = false }: { cameraU
         {pilotEnabled && !privateAccess ? (
           <>
             <h1 className="text-3xl font-semibold tracking-tight">Home Camera Access</h1>
-            <p className="text-mute">Watch the Back Garden pilot with your individual camera account. No Tailscale app needed.</p>
-            <Link className="btn btn-primary mt-2" href="/watch">Watch Back Garden</Link>
+            <p className="text-mute">Watch your home cameras with your individual camera account. No installation or Tailscale needed.</p>
+            <Link className="btn btn-primary mt-2" href="/watch">Watch cameras</Link>
             <button className="btn btn-secondary" onClick={() => setPrivateAccess(true)}>Open existing private cameras</button>
             <Link className="text-sm text-mute underline" href="/setup">Private access setup</Link>
           </>
