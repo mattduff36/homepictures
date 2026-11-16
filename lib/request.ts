@@ -4,7 +4,7 @@ export type JsonReadResult =
   | { ok: true; value: unknown }
   | { ok: false; status: number };
 
-export function hasJsonContentType(request: Request): boolean {
+export function hasJsonContentType(request: Pick<Request, "headers">): boolean {
   const contentType = request.headers.get("content-type");
   if (!contentType) {
     return false;

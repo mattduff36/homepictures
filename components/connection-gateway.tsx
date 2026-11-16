@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import Link from "next/link";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   cancelGatewayCheck,
   getGatewayServerSnapshot,
@@ -10,7 +11,8 @@ import {
   takeNavigationTarget,
 } from "@/lib/connection-gateway";
 
-export function ConnectionGateway({ cameraUrl }: { cameraUrl: string }) {
+export function ConnectionGateway({ cameraUrl, pilotEnabled = false }: { cameraUrl: string; pilotEnabled?: boolean }) {
+  const [privateAccess, setPrivateAccess] = useState(!pilotEnabled);
   const state = useSyncExternalStore(
     subscribeGateway,
     getGatewaySnapshot,
@@ -18,15 +20,15 @@ export function ConnectionGateway({ cameraUrl }: { cameraUrl: string }) {
   );
 
   useEffect(() => {
-    startGatewayCheck(cameraUrl);
-  }, [cameraUrl]);
+    if (privateAccess) startGatewayCheck(cameraUrl);
+  }, [cameraUrl, privateAccess]);
 
   useEffect(() => {
-    const target = takeNavigationTarget(cameraUrl);
+    const target = privateAccess ? takeNavigationTarget(cameraUrl) : null;
     if (target) {
       window.location.replace(target);
     }
-  }, [cameraUrl, state.secondsLeft, state.status]);
+  }, [cameraUrl, privateAccess, state.secondsLeft, state.status]);
 
   const connected = state.status === "connected";
   const seconds = Math.max(state.secondsLeft, 1);
@@ -42,10 +44,19 @@ export function ConnectionGateway({ cameraUrl }: { cameraUrl: string }) {
   return (
     <main className="page-shell mx-auto flex min-h-[100dvh] w-full flex-col items-center justify-center px-[max(1.25rem,env(safe-area-inset-left))] py-[max(2rem,env(safe-area-inset-bottom))] pr-[max(1.25rem,env(safe-area-inset-right))] text-center">
       <div className="flex max-w-2xl flex-col items-center gap-4">
-        {state.status === "checking" ? (
+        {pilotEnabled && !privateAccess ? (
+          <>
+            <h1 className="text-3xl font-semibold tracking-tight">Home Camera Access</h1>
+            <p className="text-mute">Watch the Back Garden pilot with your individual camera account. No Tailscale app needed.</p>
+            <Link className="btn btn-primary mt-2" href="/watch">Watch Back Garden</Link>
+            <button className="btn btn-secondary" onClick={() => setPrivateAccess(true)}>Open existing private cameras</button>
+            <Link className="text-sm text-mute underline" href="/setup">Private access setup</Link>
+          </>
+        ) : null}
+        {privateAccess && state.status === "checking" ? (
           <span className="gateway-spinner" aria-hidden="true" />
         ) : null}
-        <p className="text-lg font-semibold tracking-tight lg:text-2xl" aria-live="polite">
+        {privateAccess ? <><p className="text-lg font-semibold tracking-tight lg:text-2xl" aria-live="polite">
           {status}
         </p>
         <p className="text-sm leading-relaxed text-mute">
@@ -53,13 +64,13 @@ export function ConnectionGateway({ cameraUrl }: { cameraUrl: string }) {
           or installed app and install again from the new camera page at{" "}
           <a className="underline" href={cameraUrl}>{cameraUrl}</a>.
           Choose Cancel for setup instructions.
-        </p>
+        </p></> : null}
       </div>
-      <div className="setup-sticky-cta mt-8">
+      {privateAccess ? <div className="setup-sticky-cta mt-8">
         <button type="button" className="btn btn-secondary w-full min-w-32 lg:w-auto" onClick={onCancel}>
           Cancel
         </button>
-      </div>
+      </div> : null}
     </main>
   );
 }

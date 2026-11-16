@@ -49,6 +49,7 @@ export function buildContentSecurityPolicy(
     `script-src ${scriptSrc}`,
     `style-src ${styleSrc}`,
     "img-src 'self' blob: data:",
+    "media-src 'self' blob:",
     "font-src 'self'",
     connectSrc,
     "object-src 'none'",
@@ -63,6 +64,6 @@ export function buildContentSecurityPolicy(
 
 export function shouldDisableStore(pathname: string): boolean {
   return (
-    pathname === "/" || pathname === "/setup" || pathname.startsWith("/api/")
+    pathname === "/" || pathname === "/setup" || pathname === "/watch" || pathname.startsWith("/api/")
   );
 }
