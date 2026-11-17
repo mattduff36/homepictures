@@ -140,7 +140,7 @@ function CameraTile({ camera, fleet, selected, visible, select, expired, dataSav
           muted autoPlay playsInline aria-label={`${camera.label} live video`} />
         {ring && !active && snapshot ? <img src={`data:image/jpeg;base64,${snapshot.image}`}
           alt={`${camera.label} snapshot, not live`} className="h-full w-full object-contain" /> : null}
-        {ring && !active ? <span className="absolute bottom-0 left-0 inline-flex h-5 items-center gap-[3px] border border-white/50 bg-black/70 px-[5px] text-[9px] font-semibold text-white"
+        {ring && !active ? <span className="absolute bottom-0 left-0 inline-flex h-5 items-center gap-[3px] border border-white/50 bg-black px-[5px] text-[9px] font-semibold text-white"
           title={age === null ? "Snapshot capture time unknown" : `Snapshot captured ${age}s ago${stale ? " (stale)" : ""}`}
           aria-label={age === null ? "Snapshot capture time unknown" : `Snapshot captured ${age}s ago${stale ? " (stale)" : ""}`}>
           <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2">
