@@ -57,8 +57,16 @@ function CameraTile({ camera, fleet, selected, visible, select, expired, dataSav
 
   useEffect(() => {
     if (!snapshot || !visible) return;
-    const timer = setInterval(() => setNow(Date.now()), 15000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      const timestamp = Date.now();
+      setNow(timestamp);
+      const elapsed = snapshot.capturedAt == null ? 60000 : Math.max(0, timestamp - snapshot.capturedAt * 1000);
+      const step = elapsed < 60000 ? 10000 : 60000;
+      timer = setTimeout(tick, Math.max(250, step - elapsed % step));
+    };
+    timer = setTimeout(tick, 0);
+    return () => clearTimeout(timer);
   }, [snapshot, visible]);
 
   useEffect(() => {
@@ -132,9 +140,13 @@ function CameraTile({ camera, fleet, selected, visible, select, expired, dataSav
           muted autoPlay playsInline aria-label={`${camera.label} live video`} />
         {ring && !active && snapshot ? <img src={`data:image/jpeg;base64,${snapshot.image}`}
           alt={`${camera.label} snapshot, not live`} className="h-full w-full object-contain" /> : null}
-        {ring && !active ? <span className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-1 text-xs text-white">
-          {!snapshot ? "No snapshot yet" : age === null ? "Snapshot · age unknown" :
-            `Snapshot · ${age < 60 ? `${age}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`} ago${stale ? " · stale" : ""}`}
+        {ring && !active ? <span className="absolute bottom-0 left-0 inline-flex h-5 items-center gap-[3px] border border-white/50 bg-black/70 px-[5px] text-[9px] font-semibold text-white"
+          title={age === null ? "Snapshot capture time unknown" : `Snapshot captured ${age}s ago${stale ? " (stale)" : ""}`}
+          aria-label={age === null ? "Snapshot capture time unknown" : `Snapshot captured ${age}s ago${stale ? " (stale)" : ""}`}>
+          <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8" cy="8" r="1" /><path d="m3 17 6-6 4 4 3-3 5 5" />
+          </svg>
+          {age === null ? "—" : age < 60 ? `${Math.floor(age / 10) * 10}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`}
         </span> : null}
         {state.status !== "playing" && !(ring && !active && snapshot) ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-mute">
