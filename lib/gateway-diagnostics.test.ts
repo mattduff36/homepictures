@@ -83,7 +83,7 @@ test("connection failure links only an identical error, redacts raw messages and
   const origin = "https://gateway.example:10000";
   const diagnostics = createGatewayDiagnostics(origin, record => logs.push(record));
   const params = { hostname: "gateway.example", port: "10000", protocol: "https:" };
-  const failure = Object.assign(new Error("private-token (attempted addresses: 203.0.113.7:10000), private-password"),
+  const failure = Object.assign(new Error("private-token (attempted addresses: 203.0.113.7:10000, [2001:db8::1]:10000, 2001:db8::2:10000, timeout: 10000ms), private-password"),
     { code: "UND_ERR_CONNECT_TIMEOUT" });
   try {
     await assert.rejects(diagnostics.run("a".repeat(32), "poll", async () => {
@@ -100,7 +100,7 @@ test("connection failure links only an identical error, redacts raw messages and
     assert.equal(end?.last_stage, "fetch_start");
     assert.equal(end?.upstream_status, null);
     assert.deepEqual(end?.transport_codes, ["UND_ERR_CONNECT_TIMEOUT"]);
-    assert.deepEqual(connection?.attempted_addresses, ["203.0.113.7"]);
+    assert.deepEqual(connection?.attempted_addresses, ["203.0.113.7", "2001:db8::1", "2001:db8::2"]);
     assert.doesNotMatch(JSON.stringify(logs), /private-token|private-password|private-body|other.example/);
     await assert.rejects(diagnostics.run("b".repeat(32), "session", async () => {
       throw Object.assign(new Error("unrelated private-body"), { code: "ECONNRESET" });

@@ -57,11 +57,14 @@ function attemptedAddresses(error: unknown): string[] {
   walkErrors(error, item => {
     if (typeof item.address === "string" && isIP(item.address)) addresses.add(item.address);
     if (typeof item.message !== "string") return;
-    const match = /attempted addresses: ([^)]{1,512})\)/.exec(item.message.slice(0, 1024));
+    const match = /attempted address(?:es)?: ([^)]{1,512})\)/.exec(item.message.slice(0, 1024));
     for (const candidate of match?.[1].split(", ") ?? []) {
-      const endpoint = /^(?:\[([0-9a-fA-F:]+)\]|(\d{1,3}(?:\.\d{1,3}){3})):(\d{1,5})$/.exec(candidate);
-      const address = endpoint?.[1] ?? endpoint?.[2];
-      if (address && isIP(address) && Number(endpoint?.[3]) <= 65535) addresses.add(address);
+      const separator = candidate.lastIndexOf(":");
+      const address = candidate.slice(0, separator).replace(/^\[|\]$/g, "");
+      const port = candidate.slice(separator + 1);
+      if (separator > 0 && isIP(address) && /^\d{1,5}$/.test(port) && Number(port) > 0 && Number(port) <= 65535) {
+        addresses.add(address);
+      }
     }
   });
   return [...addresses].slice(0, 8);
