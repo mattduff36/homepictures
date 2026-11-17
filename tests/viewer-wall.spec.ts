@@ -51,6 +51,7 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   const saved = page.getByRole('dialog',{name:'Saved sign-ins',exact:true});
   await expect(saved.getByRole('heading',{name:'This browser'})).toBeVisible();
   await expect(saved.getByRole('button',{name:'Sign out this session'})).toHaveCount(1);
+  await page.screenshot({path:testInfo.outputPath('saved-sign-ins.png')});
   await saved.getByRole('button',{name:'Sign out this session'}).click();
   await expect(saved.getByRole('heading',{name:'Other saved sign-in'})).toHaveCount(0);
   expect(revoked).toEqual([otherId]);
@@ -74,4 +75,5 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await page.setViewportSize({width:844,height:390});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath('landscape-wall.png'),fullPage:true});
 });
