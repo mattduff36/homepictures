@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { hasJsonContentType } from "./request";
+import { gatewayDiagnostics, transportCodes } from "./gateway-diagnostics";
 import {
   exactFields, isRecord, isSdp, isViewerToken, isCameraId, isLiveMode, validCameras, validPoll,
   validSnapshot, VIEWER_ACTIONS,
@@ -100,30 +101,32 @@ async function gateway(
   const raw = JSON.stringify(body);
   const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = randomBytes(16).toString("hex");
+  let upstreamStatus: number | undefined;
   try {
-    const response = await fetchImpl(`${origin}${path}`, {
-      method: "POST", cache: "no-store", redirect: "error",
-      signal: AbortSignal.timeout(12000),
-      headers: {
-        "Content-Type": "application/json", Accept: "application/json",
-        "X-Viewer-Timestamp": timestamp, "X-Viewer-Nonce": nonce,
-        "X-Viewer-Signature": gatewaySignature(secret, timestamp, nonce, path, raw),
-      },
-      body: raw,
-    });
-    if (!response.ok) {
-      const failure = await boundedJson(response, 2048).catch(() => null);
-      const code = response.status === 429 && isRecord(failure) && isViewerFailureCode(failure.code)
-        ? failure.code : undefined;
-      throw new ViewerError([400, 401, 403, 413, 429].includes(response.status) ? response.status : 502,
-        "viewer_gateway_denied", code);
-    }
-    return await boundedJson(response, action === "snapshot" ? VIEWER_MAX_SNAPSHOT_JSON : VIEWER_MAX_JSON);
+    return await gatewayDiagnostics().run(nonce, action, async () => {
+      const response = await fetchImpl(`${origin}${path}`, {
+        method: "POST", cache: "no-store", redirect: "error",
+        signal: AbortSignal.timeout(12000),
+        headers: {
+          "Content-Type": "application/json", Accept: "application/json",
+          "X-Viewer-Timestamp": timestamp, "X-Viewer-Nonce": nonce,
+          "X-Viewer-Signature": gatewaySignature(secret, timestamp, nonce, path, raw),
+        },
+        body: raw,
+      });
+      upstreamStatus = response.status;
+      if (!response.ok) {
+        const failure = await boundedJson(response, 2048).catch(() => null);
+        const code = response.status === 429 && isRecord(failure) && isViewerFailureCode(failure.code)
+          ? failure.code : undefined;
+        throw new ViewerError([400, 401, 403, 413, 429].includes(response.status) ? response.status : 502,
+          "viewer_gateway_denied", code);
+      }
+      return await boundedJson(response, action === "snapshot" ? VIEWER_MAX_SNAPSHOT_JSON : VIEWER_MAX_JSON);
+    }, () => upstreamStatus);
   } catch (error) {
     if (error instanceof ViewerError) throw error;
-    const cause = error instanceof Error ? error.cause : null;
-    const transport = isRecord(cause) && typeof cause.code === "string" && /^[A-Z0-9_]{1,64}$/.test(cause.code)
-      ? cause.code : error instanceof Error && error.name === "TimeoutError" ? "TIMEOUT" : "NETWORK_ERROR";
+    const transport = transportCodes(error)[0] ?? "NETWORK_ERROR";
     throw new ViewerError(502, "viewer_gateway_unavailable", undefined, transport);
   }
 }

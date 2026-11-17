@@ -37,6 +37,39 @@ function response(value: unknown, status = 200) {
 }
 const noFetch: typeof fetch = async () => { throw new Error("must not call upstream"); };
 
+test("gateway attempt logs share the signed nonce and never expose authentication or response bodies", async () => {
+  const originalInfo = console.info;
+  const records: unknown[] = [];
+  let nonce = "";
+  console.info = (record: unknown) => {
+    records.push(typeof record === "string" && record.startsWith("{") ? JSON.parse(record) : record);
+  };
+  try {
+    const result = await handleViewerRequest(request(), "session", async (_url, init) => {
+      nonce = new Headers(init?.headers).get("X-Viewer-Nonce") ?? "";
+      return response({ username: "private-username", cameras: VIEWER_CAMERAS,
+        expires: Math.floor(Date.now() / 1000) + 3600 });
+    });
+    assert.equal(result.status, 200);
+    assert.match(nonce, /^[0-9a-f]{32}$/);
+    const attempts = records.filter((record): record is Record<string, unknown> =>
+      typeof record === "object" && record !== null && "trace_id" in record);
+    assert.equal(attempts.length, 2);
+    assert.ok(attempts.every(record => record.trace_id === nonce && record.action === "session"));
+    assert.equal(attempts[1].upstream_status, 200);
+    assert.equal(attempts[1].network_events_observed, false);
+    assert.doesNotMatch(JSON.stringify(records), new RegExp(`${secret}|${session}|private-username|test-provider-token|signature|cookie`, "i"));
+    records.length = 0;
+    const failure = await handleViewerRequest(request(), "session", async () => {
+      throw new TypeError("password-private", {cause:Object.assign(new Error("body-private"), {code:"ECONNRESET"})});
+    });
+    assert.equal(failure.status, 502);
+    assert.match(JSON.stringify(records), /ECONNRESET/);
+    assert.doesNotMatch(JSON.stringify(records), /password-private|body-private/);
+    assert.doesNotMatch(await failure.text(), /trace_id|ECONNRESET|remote_address/);
+  } finally { console.info = originalInfo; }
+});
+
 test("viewer is off by default and missing/incorrect config fails closed with no-store", async () => {
   for (const [key, value] of [["VIEWER_ENABLED", ""], ["VIEWER_SHARED_SECRET", ""],
     ["VIEWER_GATEWAY_ORIGIN", "https://attacker.example"]] as const) {
