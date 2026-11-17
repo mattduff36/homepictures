@@ -260,3 +260,9 @@ details.disclosure > summary::-webkit-details-marker {
     animation-duration: 0.01ms !important;
   }
 }
+
+.viewer-snapshot-badge { animation: camera-badge-clear-background .35s ease 30s forwards; }
+@keyframes camera-badge-clear-background {
+  from { background-color: #000; border-color: rgb(255 255 255 / .5); }
+  to { background-color: transparent; border-color: transparent; }
+}
