@@ -201,6 +201,29 @@ function CameraTile({ camera, fleet, selected, visible, select, expired, dataSav
 }
 
 export function CameraViewer({ enabled }: { enabled: boolean }) {
+  useEffect(() => {
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    const restore = () => {
+      clearTimeout(pending);
+      pending = undefined;
+      for (const animation of document.getAnimations()) {
+        if (animation instanceof CSSAnimation && animation.animationName === "camera-badge-clear-background") {
+          animation.currentTime = 0;
+          animation.play();
+        }
+      }
+    };
+    const move = () => { if (pending === undefined) pending = setTimeout(restore, 100); };
+    document.addEventListener("pointerdown", restore, { passive: true, capture: true });
+    document.addEventListener("pointermove", move, { passive: true, capture: true });
+    document.addEventListener("keydown", restore, true);
+    return () => {
+      clearTimeout(pending);
+      document.removeEventListener("pointerdown", restore, true);
+      document.removeEventListener("pointermove", move, true);
+      document.removeEventListener("keydown", restore, true);
+    };
+  }, []);
   const [fleet] = useState(() => new ViewerFleet());
   const mounted = useRef(false);
   const authGeneration = useRef(0);
