@@ -76,9 +76,11 @@ export async function viewerApi(
     const failure = await response.json().catch(() => null);
     const code: ViewerFailureCode | undefined = isViewerFailureCode(failure?.code) ? failure.code : undefined;
     throw new ViewerApiError(response.status, code ? VIEWER_FAILURE_MESSAGES[code] : response.status === 401
-      ? "Your sign-in has expired or was revoked. Please sign in again."
+      ? action === "login" ? "The username or password was not accepted. Please check and try again."
+        : "Your sign-in has expired or was revoked. Please sign in again."
       : response.status === 429 ? "The viewing service has reached a limit. Please wait before retrying."
-      : response.status >= 500 ? "The camera gateway is temporarily unavailable. Please retry."
+      : response.status >= 500 ? action === "snapshot" ? "Snapshot unavailable. Refresh to retry."
+        : "The camera gateway is temporarily unavailable. Please retry."
       : "This camera connection is no longer available. Please retry.", code);
   }
   return response.json() as Promise<unknown>;

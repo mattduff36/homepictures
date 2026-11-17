@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import {
-  fullscreenVideo, summarizeStats, ViewerApiError, ViewerFleet, ViewerPlayer, waitForGathering,
+  fullscreenVideo, summarizeStats, viewerApi, ViewerApiError, ViewerFleet, ViewerPlayer, waitForGathering,
   type PlayerState, type VideoSink, type ViewerPeer,
 } from "./viewer-player";
 import { VIEWER_CAMERA, VIEWER_CAMERAS, type CameraId, type LiveMode } from "./viewer-protocol";
@@ -89,6 +89,19 @@ function fixture(apiOverride?: (action: string, body: Record<string, unknown>) =
     get expired() { return expired; }, get paused() { return paused; }, get trackStopped() { return trackStopped; } };
 }
 async function pause(ms = 15) { await new Promise((resolve) => setTimeout(resolve, ms)); }
+
+test("API errors distinguish rejected credentials, expired sessions and unavailable snapshots", async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response('{"error":"Request unavailable"}', {status:401});
+    await assert.rejects(viewerApi("login"), /username or password was not accepted/);
+    await assert.rejects(viewerApi("session"), /expired or was revoked/);
+    globalThis.fetch = async () => new Response('{"error":"Request unavailable"}', {status:502});
+    await assert.rejects(viewerApi("snapshot"), /^Error: Snapshot unavailable/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
 
 test("no connection until explicit Watch; peer is relay-only and audio/video are receive-only", async () => {
   const f = fixture();
