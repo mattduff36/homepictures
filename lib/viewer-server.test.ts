@@ -157,6 +157,30 @@ test("revoked session and rate limits never request TURN credentials", async () 
   }
 });
 
+test("Ring manual config is forwarded explicitly with a maximum five-minute lease", async () => {
+  let calls = 0;
+  const result = await handleViewerRequest(request({ camera: "ring-back", mode: "manual" }), "config",
+    async (_url, init) => {
+      ++calls;
+      if (calls === 1) {
+        assert.deepEqual(JSON.parse(String(init?.body)), { session, camera: "ring-back", mode: "manual" });
+        return response({ lease, camera: "ring-back", expires: Math.floor(Date.now() / 1000) + 300 });
+      }
+      return response({ iceServers: [{ urls: ["turn:turn.cloudflare.com:3478"],
+        username: "temporary", credential: "temporary" }] });
+    });
+  assert.equal(result.status, 200);
+  assert.equal(calls, 2);
+  let oversizedCalls = 0;
+  const oversized = await handleViewerRequest(request({ camera: "ring-back", mode: "manual" }), "config",
+    async () => {
+      ++oversizedCalls;
+      return response({ lease, camera: "ring-back", expires: Math.floor(Date.now() / 1000) + 900 });
+    });
+  assert.equal(oversized.status, 502);
+  assert.equal(oversizedCalls, 1);
+});
+
 test("TURN failure releases reservation and returns only a generic error", async () => {
   const paths: string[] = [];
   const result = await handleViewerRequest(request(live), "config", async (url) => {
@@ -227,7 +251,9 @@ test("camera list, JSON polls, heartbeat and private snapshots are strictly vali
   assert.equal(still.headers.get("Cache-Control"), "private, no-store");
   assert.equal((await handleViewerRequest(request({ lease }), "poll", async () =>
     response({ events: [{ candidate: "bad", sdpMLineIndex: 9 }], closed: false }))).status, 502);
-  for (const body of [{ camera: "ring-back", mode: "live" }, { camera: VIEWER_CAMERA, mode: "always" }, {}]) {
+  for (const body of [{ camera: "ring-back", mode: "live" }, { camera: "ring-back", mode: "timed" },
+    { camera: "ring-back", mode: "always" }, { camera: VIEWER_CAMERA, mode: "manual" },
+    { camera: VIEWER_CAMERA, mode: "always" }, {}]) {
     assert.equal((await handleViewerRequest(request(body), "config", noFetch)).status, 400);
   }
 });

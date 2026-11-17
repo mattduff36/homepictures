@@ -1,5 +1,5 @@
 import {
-  exactFields, isSdp, isViewerToken, validCameras, validPoll, VIEWER_CAMERA, VIEWER_PLAYBACK_MS,
+  exactFields, isLiveMode, isSdp, isViewerToken, validCameras, validPoll, VIEWER_CAMERA, VIEWER_PLAYBACK_MS,
   type CameraId, type LiveMode, type ViewerCamera,
 } from "./viewer-protocol";
 
@@ -202,6 +202,7 @@ export class ViewerPlayer {
   }
 
   async start(camera: CameraId = VIEWER_CAMERA, mode: LiveMode = "live", label = "Back Garden") {
+    if (!isLiveMode(camera, mode)) throw new Error("Ring live requires fullscreen and explicit Play.");
     this.stop("", "idle");
     const generation = this.generation;
     const current = () => generation === this.generation;
@@ -214,9 +215,10 @@ export class ViewerPlayer {
     this.heartbeating = false;
     this.label = label;
     const limitMessage = camera.startsWith("ring-")
-      ? (mode === "timed" ? "Timed live ended. Snapshot mode; refresh the still when needed."
-        : "Live budget ended. Press Continue live for another foreground session.")
+      ? "Live View ended after five minutes. Press Play in fullscreen to start again."
       : "The 15-minute viewing limit was reached. Press Watch to restart.";
+    const playbackMs = Math.min(this.deps.timing?.playbackMs ?? VIEWER_PLAYBACK_MS,
+      camera.startsWith("ring-") ? 300000 : VIEWER_PLAYBACK_MS);
     this.publish({ status: "connecting", message: `Connecting to ${label}...`, muted: true,
       diagnostics: { ...EMPTY_DIAGNOSTICS } });
     this.startupTimer = setTimeout(() => {
@@ -224,7 +226,7 @@ export class ViewerPlayer {
     }, this.deps.timing?.startupMs ?? 35000);
     this.limitTimer = setTimeout(() => {
       if (current()) this.stop(limitMessage);
-    }, this.deps.timing?.playbackMs ?? VIEWER_PLAYBACK_MS);
+    }, playbackMs);
     try {
       await this.releasePending;
       if (!current()) return;
@@ -244,7 +246,7 @@ export class ViewerPlayer {
       clearTimeout(this.limitTimer);
       this.limitTimer = setTimeout(() => {
         if (current()) this.stop(limitMessage);
-      }, Math.min(remaining, this.deps.timing?.playbackMs ?? VIEWER_PLAYBACK_MS));
+      }, Math.min(remaining, playbackMs));
       const peer = (this.deps.peer ?? ((options) => new RTCPeerConnection(options)))({
         iceServers: config.iceServers, iceTransportPolicy: "relay", bundlePolicy: "max-bundle",
       });
@@ -391,6 +393,7 @@ export function validSession(value: unknown): value is { username: string; camer
 export class ViewerFleet {
   private players = new Map<CameraId, ViewerPlayer>();
   private generation = 0;
+  private fullscreenRing: CameraId | null = null;
   register(camera: CameraId, player: ViewerPlayer) {
     this.players.get(camera)?.stop();
     this.players.set(camera, player);
@@ -401,13 +404,36 @@ export class ViewerFleet {
   }
   stop(message?: string) {
     ++this.generation;
+    this.fullscreenRing = null;
     for (const player of this.players.values()) player.stop(message);
   }
   retain(camera: CameraId) {
     ++this.generation;
+    if (this.fullscreenRing !== camera) this.fullscreenRing = null;
     for (const [id, player] of this.players) if (id !== camera) player.stop();
   }
   async watch(cameras: ViewerCamera[], mode: LiveMode = "live") {
+    if (cameras.some((camera) => camera.kind === "ring")) {
+      throw new Error("Choose one camera in fullscreen and press Play for Ring Live View.");
+    }
+    return this.watchCameras(cameras, mode);
+  }
+  enterRingFullscreen(camera: CameraId) {
+    if (!camera.startsWith("ring-")) throw new Error("Choose a Ring camera.");
+    this.stop();
+    this.fullscreenRing = camera;
+  }
+  leaveRingFullscreen(camera: CameraId) {
+    if (this.fullscreenRing !== camera) return;
+    this.stop("Fullscreen closed. Ring returned to snapshots.");
+  }
+  async playRingFullscreen(camera: ViewerCamera) {
+    if (camera.kind !== "ring" || this.fullscreenRing !== camera.id) {
+      throw new Error("Open this Ring camera fullscreen, then press Play.");
+    }
+    return this.watchCameras([camera], "manual");
+  }
+  private async watchCameras(cameras: ViewerCamera[], mode: LiveMode) {
     if (!cameras.length || cameras.length > 5 || new Set(cameras.map((c) => c.id)).size !== cameras.length ||
         (cameras.some((c) => c.kind === "ring") && cameras.length !== 1)) {
       throw new Error("Choose one camera or the Swann wall.");

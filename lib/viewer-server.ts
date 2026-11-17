@@ -247,7 +247,8 @@ export async function handleViewerRequest(
       if (!exactFields(value, ["lease", "expires", "camera"]) || !isViewerToken(value.lease) ||
           value.camera !== body.camera || typeof value.expires !== "number" ||
           !Number.isInteger(value.expires) || value.expires <= Date.now() / 1000 ||
-          value.expires > Math.floor(Date.now() / 1000) + 900) {
+          value.expires > Math.floor(Date.now() / 1000) +
+            (String(body.camera).startsWith("ring-") ? 300 : 900)) {
         throw new ViewerError(502, "viewer_invalid_response");
       }
       try {

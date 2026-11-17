@@ -8,7 +8,7 @@ import {
   ViewerPlayer, type PlayerState,
 } from "@/lib/viewer-player";
 import {
-  validSnapshot, type CameraId, type RingPolicy, type ViewerCamera, type ViewerSnapshot,
+  validSnapshot, type CameraId, type ViewerCamera, type ViewerSnapshot,
 } from "@/lib/viewer-protocol";
 
 function CameraTile({ camera, fleet, selected, visible, select, expired, dataSaver, epoch }: {
@@ -16,16 +16,23 @@ function CameraTile({ camera, fleet, selected, visible, select, expired, dataSav
   expired: () => void; dataSaver: boolean; epoch: number;
 }) {
   const video = useRef<HTMLVideoElement>(null);
+  const container = useRef<HTMLElement>(null);
   const player = useRef<ViewerPlayer | null>(null);
   const snapshotGeneration = useRef(0);
   const snapshotAbort = useRef<AbortController | null>(null);
   const [state, setState] = useState<PlayerState>(INITIAL_PLAYER_STATE);
-  const [policy, setPolicy] = useState<RingPolicy>("snapshot");
+  const [fullscreenEpoch, setFullscreenEpoch] = useState<number | null>(null);
   const [snapshot, setSnapshot] = useState<ViewerSnapshot | null>(null);
   const [snapshotRequest, setSnapshotRequest] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [now, setNow] = useState(0);
   const snapshotBusy = snapshotRequest === epoch;
+  const ring = camera.kind === "ring";
+  const fullscreen = ring && visible && fullscreenEpoch === epoch;
+  const closeFullscreen = useCallback(() => {
+    fleet.leaveRingFullscreen(camera.id);
+    setFullscreenEpoch(null);
+  }, [camera.id, fleet]);
   const cancelSnapshot = useCallback(() => {
     ++snapshotGeneration.current;
     snapshotAbort.current?.abort();
@@ -54,9 +61,32 @@ function CameraTile({ camera, fleet, selected, visible, select, expired, dataSav
     return () => clearInterval(timer);
   }, [snapshot, visible]);
 
+  useEffect(() => {
+    if (!fullscreen) return;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    container.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); closeFullscreen(); }
+      if (event.key !== "Tab") return;
+      const controls = [...(container.current?.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), summary, [href], [tabindex='0']",
+      ) ?? [])];
+      const first = controls[0], last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", keyboard);
+    return () => {
+      fleet.leaveRingFullscreen(camera.id);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", keyboard);
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, [fullscreen, camera.id, fleet, closeFullscreen]);
+
   const active = state.status === "playing" || state.status === "connecting";
-  const ring = camera.kind === "ring";
-  const effectivePolicy = dataSaver ? "snapshot" : policy;
   const age = snapshot?.capturedAt == null ? null : Math.max(0, Math.floor(now / 1000 - snapshot.capturedAt));
   const stale = snapshot?.stale || age === null || age >= 120;
 
@@ -85,19 +115,27 @@ function CameraTile({ camera, fleet, selected, visible, select, expired, dataSav
   }
 
   return (
-    <section hidden={!visible} className={`panel overflow-hidden ${selected ? "sm:col-span-2" : ""}`}
-      aria-label={`${camera.label} ${camera.kind} camera`}>
+    <section ref={container} hidden={!visible}
+      className={fullscreen ? "fixed inset-0 z-50 flex flex-col overflow-y-auto bg-black p-3 sm:p-6" :
+        `panel overflow-hidden ${selected ? "sm:col-span-2" : ""}`}
+      role={fullscreen ? "dialog" : undefined} aria-modal={fullscreen ? true : undefined}
+      aria-label={`${camera.label} ${camera.kind} camera${fullscreen ? " fullscreen" : ""}`}>
       <div className="flex items-center justify-between gap-3 p-4">
         <h2 className="text-xl font-semibold">{camera.label}</h2>
-        <button className="btn btn-ghost" aria-pressed={selected} onClick={select}>
-          {selected ? "Selected" : "Select"}
-        </button>
+        {fullscreen ? <button className="btn btn-ghost" onClick={closeFullscreen}>Close fullscreen</button> :
+          <button className="btn btn-ghost" aria-pressed={selected} onClick={select}>
+            {selected ? "Selected" : "Select"}
+          </button>}
       </div>
-      <div className="relative aspect-video bg-black">
+      <div className={`relative bg-black ${fullscreen ? "min-h-48 flex-1" : "aspect-video"}`}>
         <video ref={video} className={`h-full w-full object-contain ${active ? "" : "hidden"}`}
           muted autoPlay playsInline aria-label={`${camera.label} live video`} />
         {ring && !active && snapshot ? <img src={`data:image/jpeg;base64,${snapshot.image}`}
           alt={`${camera.label} snapshot, not live`} className="h-full w-full object-contain" /> : null}
+        {ring && !active ? <span className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-1 text-xs text-white">
+          {!snapshot ? "No snapshot yet" : age === null ? "Snapshot · age unknown" :
+            `Snapshot · ${age < 60 ? `${age}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`} ago${stale ? " · stale" : ""}`}
+        </span> : null}
         {state.status !== "playing" && !(ring && !active && snapshot) ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-mute">
             {ring && !active ? "Snapshot - refresh when needed. No background camera polling." : state.message}
@@ -113,37 +151,30 @@ function CameraTile({ camera, fleet, selected, visible, select, expired, dataSav
           {age !== null ? ` Captured ${age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`} ago.` : " Capture time unknown."}
         </p> : null}
         {ring ? <>
-          <label className="flex flex-col gap-2 text-sm">Battery policy
-            <select className="field" value={effectivePolicy} disabled={dataSaver} onChange={(event) => {
-              player.current?.stop("Policy changed. Start live or refresh a snapshot explicitly.");
-              setPolicy(event.target.value as RingPolicy);
-            }}>
-              <option value="snapshot">Snapshot (default)</option>
-              <option value="timed">Timed - up to 60 seconds</option>
-              <option value="always">Always - up to 4 minutes, then Continue</option>
-            </select>
-          </label>
           <button className="btn btn-secondary" disabled={snapshotBusy || active} onClick={() => { void refreshSnapshot(); }}>
             {snapshotBusy ? "Fetching still..." : "Refresh snapshot"}
           </button>
-          <p className="text-xs text-mute">All Ring cameras are battery-class. Always uses more battery.
-            {dataSaver ? " Data Saver forces Snapshot." : " No automatic live renewal."}</p>
+          <p className="text-xs text-mute">{fullscreen
+            ? "Pressing Play starts an approved Ring Live View event, for up to five minutes."
+            : "Snapshots only. Open fullscreen, then press Play for live video."}
+            {dataSaver ? " Data Saver disables live playback." : " No automatic live renewal."}</p>
         </> : null}
         <div className="flex flex-wrap gap-2">
-          {!ring || effectivePolicy !== "snapshot" ? <button className="btn btn-primary" disabled={active}
+          {!ring || fullscreen ? <button className="btn btn-primary" disabled={active || (ring && dataSaver)}
             onClick={() => {
               if (!document.hidden && navigator.onLine !== false) {
                 setError("");
-                void fleet.watch([camera], ring && effectivePolicy !== "snapshot" ? effectivePolicy : "live")
+                void (ring ? fleet.playRingFullscreen(camera) : fleet.watch([camera]))
                   .catch(() => setError("Viewing could not start. Please retry."));
               } else setError("Offline or paused. Return online and press Watch.");
-            }}>{state.status === "error" ? "Retry" : ring && effectivePolicy === "always" ? "Continue live" : "Watch"}</button> : null}
+            }}>{ring ? "Play" : state.status === "error" ? "Retry" : "Watch"}</button> : null}
           <button className="btn btn-secondary" disabled={!active} onClick={() => player.current?.stop()}>Stop</button>
           <button className="btn btn-secondary" disabled={state.status !== "playing"} aria-pressed={!state.muted}
             onClick={() => { void fleet.sound(camera.id); }}>{state.muted ? "Sound on" : "Sound off"}</button>
-          <button className="btn btn-ghost" disabled={state.status !== "playing"} onClick={() => {
-            if (video.current) void fullscreenVideo(video.current).catch(() => setError("Fullscreen is unavailable."));
-          }}>Fullscreen</button>
+          {!fullscreen ? <button className="btn btn-ghost" disabled={!ring && state.status !== "playing"} onClick={() => {
+            if (ring) { fleet.enterRingFullscreen(camera.id); setFullscreenEpoch(epoch); }
+            else if (video.current) void fullscreenVideo(video.current).catch(() => setError("Fullscreen is unavailable."));
+          }}>Fullscreen</button> : null}
         </div>
         <details className="text-xs text-mute">
           <summary className="cursor-pointer">Connection check</summary>
@@ -320,7 +351,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
           {selected ? <button className="btn btn-secondary self-start" onClick={() => setSelected(null)}>Show camera tiles</button> : null}
           <p className="text-sm leading-relaxed text-mute">Starts muted; only one camera can have sound.
             Swann uses economical SD streams, up to five at once and 15 minutes per connection.
-            Ring Timed returns to snapshots within 60 seconds; Always requires explicit Continue after 4 minutes.
+            Ring stays on snapshots unless opened fullscreen and Play is pressed. Live View ends after five minutes.
             Stop, leaving this page, hiding the tab or losing the network ends viewing. No automatic reconnect.</p>
           <details className="panel p-4 text-sm text-mute">
             <summary className="cursor-pointer text-ink">Add to Home Screen / private features</summary>

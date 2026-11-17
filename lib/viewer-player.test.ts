@@ -6,7 +6,7 @@ import {
   fullscreenVideo, summarizeStats, ViewerApiError, ViewerFleet, ViewerPlayer, waitForGathering,
   type PlayerState, type VideoSink, type ViewerPeer,
 } from "./viewer-player";
-import { VIEWER_CAMERA, VIEWER_CAMERAS, type CameraId } from "./viewer-protocol";
+import { VIEWER_CAMERA, VIEWER_CAMERAS, type CameraId, type LiveMode } from "./viewer-protocol";
 import { buildContentSecurityPolicy, shouldDisableStore } from "./security-headers";
 
 const sdp = "v=0\r\ns=test\r\n";
@@ -338,9 +338,9 @@ test("switching waits for upstream Stop; Stop while waiting cannot start a stale
   assert.equal(b.calls.length, 0);
 });
 
-test("Ring modes use their own camera and finite lease; candidates are safely polled", async () => {
+test("Ring manual live uses its own camera and finite lease; candidates are safely polled", async () => {
   const candidate = { candidate: "candidate:1 1 udp 1 1.1.1.1 3478 typ relay", sdpMLineIndex: 0 };
-  for (const mode of ["timed", "always"] as const) {
+  for (const mode of ["manual"] as const) {
     const f = fixture(async (action, body) => {
       if (action === "config") return { lease, camera: body.camera, expires: Date.now() / 1000 + 0.04, iceServers: [] };
       if (action === "offer") return { type: "answer", sdp };
@@ -352,7 +352,7 @@ test("Ring modes use their own camera and finite lease; candidates are safely po
     assert.deepEqual(f.peer.candidates, [candidate]);
     await pause(70);
     assert.equal(f.peer.closed, true);
-    assert.match(f.states.at(-1)!.message, mode === "timed" ? /Snapshot mode/ : /Continue live/);
+    assert.match(f.states.at(-1)!.message, /Press Play in fullscreen/);
     assert.equal(f.calls.filter((c) => c.action === "config").length, 1);
   }
 });
@@ -382,15 +382,68 @@ test("iPhone native video fullscreen fallback and standard fullscreen are suppor
   await assert.rejects(fullscreenVideo({} as HTMLVideoElement), /unavailable/);
 });
 
-test("all five Ring tiles default to Snapshot; Data Saver and snapshots never background-poll", () => {
+test("all five Ring tiles stay on snapshots with Play only in fullscreen; still refresh never starts live", () => {
   const component = readFileSync(join(process.cwd(), "components", "camera-viewer.tsx"), "utf8");
   assert.equal(VIEWER_CAMERAS.filter((c) => c.kind === "ring").length, 5);
-  assert.match(component, /useState<RingPolicy>\("snapshot"\)/);
-  assert.match(component, /dataSaver \? "snapshot" : policy/);
+  assert.doesNotMatch(component, /RingPolicy|effectivePolicy|value="timed"|value="always"/);
+  assert.match(component, /!ring \|\| fullscreen/);
+  assert.match(component, /fleet\.playRingFullscreen\(camera\)/);
+  assert.match(component, /fleet\.enterRingFullscreen\(camera.id\)/);
+  assert.match(component, /fleet\.leaveRingFullscreen\(camera.id\)/);
+  assert.match(component, /Snapshot · age unknown/);
   assert.match(component, /"offline", stop/);
   assert.match(component, /"online", stop/);
   assert.match(component, /generation !== snapshotGeneration\.current \|\| document\.hidden/);
   assert.equal((component.match(/viewerApi\("snapshot"/g) ?? []).length, 1);
   assert.doesNotMatch(component, /setInterval\([^;]*refreshSnapshot/);
   assert.ok(VIEWER_CAMERAS.every((camera) => camera.id !== ("_Gate" as CameraId)));
+});
+
+test("Ring fullscreen entry alone does not connect; Play requires an open fullscreen and Close releases media", async () => {
+  const fleet = new ViewerFleet();
+  const f = fixture();
+  const camera = VIEWER_CAMERAS[5];
+  fleet.register(camera.id, f.player);
+  await assert.rejects(fleet.watch([camera], "manual"), /fullscreen/);
+  await assert.rejects(fleet.playRingFullscreen(camera), /fullscreen/);
+  fleet.enterRingFullscreen(camera.id);
+  assert.equal(f.calls.length, 0);
+  await fleet.playRingFullscreen(camera);
+  assert.deepEqual(f.calls[0].body, { camera: camera.id, mode: "manual" });
+  fleet.leaveRingFullscreen(camera.id);
+  assert.equal(f.peer.closed, true);
+  assert.equal(f.video.srcObject, null);
+  assert.equal(f.calls.at(-1)?.action, "stop");
+  await assert.rejects(fleet.playRingFullscreen(camera), /fullscreen/);
+  fleet.enterRingFullscreen(camera.id);
+  assert.equal(f.calls.filter((call) => call.action === "config").length, 1);
+});
+
+test("hide/offline Stop invalidates Ring approval, and closing during pending config cannot resurrect live", async () => {
+  const fleet = new ViewerFleet();
+  const config = deferred<unknown>();
+  const requested = deferred<void>();
+  const camera = VIEWER_CAMERAS[5];
+  const f = fixture(async (action) => {
+    if (action === "config") { requested.resolve(); return config.promise; }
+    return { ok: true };
+  });
+  fleet.register(camera.id, f.player);
+  fleet.enterRingFullscreen(camera.id);
+  const pending = fleet.playRingFullscreen(camera);
+  await requested.promise;
+  fleet.stop("Page hidden");
+  config.resolve({ lease, camera: camera.id, expires: Date.now() / 1000 + 300, iceServers: [] });
+  await pending;
+  assert.equal(f.options, undefined);
+  assert.equal(f.calls.at(-1)?.action, "stop");
+  await assert.rejects(fleet.playRingFullscreen(camera), /fullscreen/);
+});
+
+test("old Ring modes cannot start a player or make an upstream request", async () => {
+  const f = fixture();
+  for (const mode of ["live", "timed", "always"]) {
+    await assert.rejects(f.player.start("ring-doorbell", mode as LiveMode), /fullscreen/);
+  }
+  assert.equal(f.calls.length, 0);
 });

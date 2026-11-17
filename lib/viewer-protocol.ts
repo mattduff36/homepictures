@@ -13,8 +13,7 @@ export const VIEWER_CAMERAS = [
 ] as const;
 export type ViewerCamera = (typeof VIEWER_CAMERAS)[number];
 export type CameraId = ViewerCamera["id"];
-export type RingPolicy = "snapshot" | "timed" | "always";
-export type LiveMode = "live" | Exclude<RingPolicy, "snapshot">;
+export type LiveMode = "live" | "manual";
 export const VIEWER_COOKIE = "__Host-mpdee-viewer";
 export const VIEWER_SESSION_SECONDS = 7 * 24 * 60 * 60;
 export const VIEWER_PLAYBACK_MS = 15 * 60 * 1000;
@@ -45,7 +44,7 @@ export function isCameraId(value: unknown): value is CameraId {
 }
 
 export function isLiveMode(camera: CameraId, mode: unknown): mode is LiveMode {
-  return camera.startsWith("ring-") ? mode === "timed" || mode === "always" : mode === "live";
+  return camera.startsWith("ring-") ? mode === "manual" : mode === "live";
 }
 
 export function validCameras(value: unknown): value is ViewerCamera[] {
