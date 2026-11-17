@@ -58,6 +58,11 @@ export class ViewerApiError extends Error {
   }
 }
 
+function transientGatewayFailure(error: unknown) {
+  return error instanceof ViewerApiError && error.status >= 500 ||
+    error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError";
+}
+
 export async function viewerApi(
   action: string, body: Record<string, unknown> = {}, signal?: AbortSignal,
 ): Promise<unknown> {
@@ -340,9 +345,7 @@ export class ViewerPlayer {
       if (generation === this.generation) {
         // Keep the existing peer only within the gateway's unchanged 45-second authority deadline.
         // Revocation and invalid responses still stop immediately; no new stream is started.
-        const transient = error instanceof ViewerApiError && error.status >= 500 ||
-          error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError";
-        if (transient) return;
+        if (transientGatewayFailure(error)) return;
         this.stop(error instanceof Error ? error.message : "Sign-in could not be confirmed. Please retry.", "error");
         if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
       }
@@ -364,6 +367,9 @@ export class ViewerPlayer {
       }
     } catch (error) {
       if (generation === this.generation) {
+        // A setup poll may still be in flight when decoded video stops further polls.
+        // Keep an established peer on a transient failure under the heartbeat deadline.
+        if (this.state.status === "playing" && transientGatewayFailure(error)) return;
         this.stop(error instanceof Error ? error.message : "The camera connection ended. Please retry.", "error");
         if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
       }

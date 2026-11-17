@@ -483,3 +483,32 @@ test("transient heartbeat failures retain only the existing peer within the auth
   assert.match(f.states.at(-1)!.message, /within 45 seconds/);
   assert.equal(f.calls.filter(call => call.action === "config").length, 1);
 });
+
+test("a late transient setup-poll failure cannot close established video with valid heartbeats", async () => {
+  const pending = deferred<unknown>();
+  const requested = deferred<void>();
+  let polls = 0;
+  const f = fixture(async (action, body) => {
+    if (action === "config") return { lease, camera: body.camera, expires: Date.now() / 1000 + 900, iceServers: [] };
+    if (action === "offer") return { type: "answer", sdp };
+    if (action === "poll") {
+      if (++polls === 1) return { events: [], closed: false };
+      requested.resolve();
+      return pending.promise;
+    }
+    return { ok: true };
+  }, { statsMs: 5, startupMs: 500, playbackMs: 1000, gatheringMs: 20, signallingMs: 5, sessionMs: 10 });
+  await f.player.start();
+  await requested.promise;
+  f.peer.frames = 3;
+  await pause();
+  f.peer.frames = 8;
+  await pause();
+  assert.equal(f.player.status, "playing");
+  pending.reject(new ViewerApiError(502, "Gateway temporarily unavailable"));
+  await pause();
+  assert.equal(f.peer.closed, false);
+  assert.equal(f.player.status, "playing");
+  assert.equal(polls, 2);
+  assert.equal(f.calls.filter(call => call.action === "config").length, 1);
+});
