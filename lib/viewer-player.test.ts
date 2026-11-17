@@ -55,7 +55,7 @@ class Peer extends EventTarget implements ViewerPeer {
 const players: ViewerPlayer[] = [];
 afterEach(() => { for (const player of players.splice(0)) player.stop(); });
 function fixture(apiOverride?: (action: string, body: Record<string, unknown>) => Promise<unknown>,
-  timing: { statsMs: number; startupMs: number; playbackMs: number; gatheringMs: number; sessionMs?: number } =
+  timing: { statsMs: number; startupMs: number; playbackMs: number; gatheringMs: number; sessionMs?: number; signallingMs?: number; authorityMs?: number } =
     { statsMs: 5, startupMs: 500, playbackMs: 1000, gatheringMs: 20 }) {
   let peer = new Peer();
   const states: PlayerState[] = [];
@@ -446,4 +446,40 @@ test("old Ring modes cannot start a player or make an upstream request", async (
     await assert.rejects(f.player.start("ring-doorbell", mode as LiveMode), /fullscreen/);
   }
   assert.equal(f.calls.length, 0);
+});
+
+test("established relayed video stops candidate polling while retaining authorization heartbeats", async () => {
+  const f = fixture(undefined, { statsMs: 5, startupMs: 500, playbackMs: 1000, gatheringMs: 20,
+    signallingMs: 5, sessionMs: 10 });
+  await f.player.start();
+  f.peer.frames = 3;
+  await pause();
+  f.peer.frames = 8;
+  await pause();
+  assert.equal(f.states.at(-1)?.status, "playing");
+  const polls = f.calls.filter(call => call.action === "poll").length;
+  const heartbeats = f.calls.filter(call => call.action === "heartbeat").length;
+  f.peer.frames = 12;
+  await pause(35);
+  assert.equal(f.calls.filter(call => call.action === "poll").length, polls);
+  assert.ok(f.calls.filter(call => call.action === "heartbeat").length > heartbeats);
+  assert.equal(f.peer.closed, false);
+});
+
+test("transient heartbeat failures retain only the existing peer within the authority deadline", async () => {
+  const f = fixture(async (action, body) => {
+    if (action === "config") return { lease, camera: body.camera, expires: Date.now() / 1000 + 900, iceServers: [] };
+    if (action === "offer") return { type: "answer", sdp };
+    if (action === "poll") return { events: [], closed: false };
+    if (action === "heartbeat") throw new ViewerApiError(502, "Gateway temporarily unavailable");
+    return { ok: true };
+  }, { statsMs: 5, startupMs: 500, playbackMs: 1000, gatheringMs: 20,
+    sessionMs: 5, authorityMs: 70 });
+  await f.player.start();
+  await pause(20);
+  assert.equal(f.peer.closed, false);
+  await pause(80);
+  assert.equal(f.peer.closed, true);
+  assert.match(f.states.at(-1)!.message, /within 45 seconds/);
+  assert.equal(f.calls.filter(call => call.action === "config").length, 1);
 });

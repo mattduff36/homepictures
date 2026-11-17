@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- Authenticated in-memory JPEGs must not enter an image optimiser/cache. */
 import Link from "next/link";
 import "./camera-wall.css";
+import { SavedSessions } from "./saved-sessions";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   INITIAL_PLAYER_STATE, validSession, viewerApi, ViewerApiError, ViewerFleet,
@@ -101,6 +102,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch }: {
   }, [fullscreen, camera.id, fleet, closeFullscreen]);
 
   const active = state.status === "playing" || state.status === "connecting";
+  const remaining = state.remainingSeconds ?? null;
   const age = snapshot?.capturedAt == null ? null : Math.max(0, Math.floor(now / 1000 - snapshot.capturedAt));
   const stale = snapshot?.stale || age === null || age >= 120;
 
@@ -120,7 +122,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch }: {
       setSnapshot(result);
     } catch (failure) {
       if (generation === snapshotGeneration.current) {
-        setError("Snapshot unavailable. Tap refresh to retry.");
+        setError(failure instanceof ViewerApiError ? failure.message : "Snapshot unavailable. Tap refresh to retry.");
         if (failure instanceof ViewerApiError && failure.status === 401) expired();
       }
     } finally {
@@ -156,13 +158,15 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch }: {
       <video ref={video} className={`vision-picture ${active ? "" : "hidden"}`} muted autoPlay playsInline aria-label={`${camera.label} live video`} />
       {ring && !active && snapshot ? <img className="vision-picture" src={`data:image/jpeg;base64,${snapshot.image}`} alt={`${camera.label} snapshot, not live`} /> : null}
       {!fullscreen ? <button className="vision-tile-open" onClick={openFullscreen} aria-label={`Open ${camera.label} fullscreen`} /> : null}
-      {!active && !(ring && snapshot) ? <div className="vision-placeholder" aria-hidden="true"><Icon name={ring ? "image" : "play"} /><span>{snapshotBusy ? "Loading snapshot…" : ring ? "Snapshot unavailable" : "Ready to watch"}</span></div> : null}
-      <span className={`vision-status vision-badge ${state.status === "playing" ? "is-live" : ""}`} role="status">{state.status === "playing" ? "LIVE" : state.status === "connecting" ? "Connecting…" : ring ? "SNAPSHOT" : "SD"}</span>
+      {!active && !(ring && snapshot) ? <div className="vision-placeholder" aria-hidden="true"><Icon name={ring ? "image" : "play"} /><span>{snapshotBusy ? "Loading snapshot…" : ring ? "Snapshot unavailable" : state.status === "error" ? "Connection unavailable" : state.status === "stopped" ? state.message : "Ready to watch"}</span></div> : null}
+      <span className={`vision-status vision-badge ${state.status === "playing" ? "is-live" : ""}`} role="status">{state.status === "playing" ? "LIVE" : state.status === "connecting" ? "Connecting…" : ring ? "SNAPSHOT" : state.status === "error" ? "UNAVAILABLE" : state.status === "stopped" ? "PAUSED" : "SD"}</span>
       <span className="vision-name vision-badge">{camera.label}</span>
+      {active && remaining !== null ? <span className="vision-budget vision-badge" aria-label={`Viewing ends in ${Math.floor(remaining / 60)} minutes ${remaining % 60} seconds`}>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span> : null}
       <div className="vision-tile-controls">
         {ring && !active ? <span className="vision-age vision-badge" title={snapshotDescription} aria-label={snapshotDescription}><Icon name="image" />{ageLabel}</span> : null}
         {ring && !active ? <button className="vision-icon vision-badge" disabled={snapshotBusy} onClick={() => void refreshSnapshot()} aria-label={`Refresh ${camera.label} snapshot`} title="Refresh snapshot"><Icon name="refresh" /></button> : null}
         {active ? <><button className="vision-icon vision-badge" disabled={state.status !== "playing"} aria-pressed={!state.muted} aria-label={`${state.muted ? "Unmute" : "Mute"} ${camera.label}`} onClick={() => void fleet.sound(camera.id)}><Icon name={state.muted ? "muted" : "sound"} /></button><button className="vision-icon vision-badge" onClick={() => player.current?.stop()} aria-label={`Stop ${camera.label}`}><Icon name="stop" /></button></> : null}
+        {!ring && !active && state.status !== "idle" ? <button className="vision-icon vision-badge" onClick={play} aria-label={`Retry ${camera.label}`} title="Retry camera"><Icon name="play" /></button> : null}
       </div>
       {fullscreen ? <>
         <button className="vision-close vision-icon" onClick={closeFullscreen} aria-label="Close fullscreen"><Icon name="close" /></button>
@@ -207,6 +211,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   const [group, setGroup] = useState<"all" | "swann" | "ring">("all");
   const menu = useRef<HTMLDialogElement>(null);
   const [dataSaver, setDataSaver] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [epoch, setEpoch] = useState(0);
   const [notice, setNotice] = useState("Press Start wall to watch Swann. Ring stays on snapshots.");
   const invalidateAuth = useCallback(() => { ++authGeneration.current; }, []);
@@ -222,10 +227,13 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
 
   useEffect(() => {
     mounted.current = true;
-    const stop = () => {
-      fleet.stop("Viewing paused. Press Watch to restart.");
+    const stop = (event?: Event) => {
+      const message = event?.type === "offline" ? "You're offline. Reconnect, then press Play or Start wall."
+        : event?.type === "online" ? "You're back online. Press Play or Start wall to resume."
+        : "Viewing paused while this page was hidden. Press Play or Start wall to resume.";
+      fleet.stop(message);
       setEpoch((value) => value + 1);
-      setNotice("Viewing paused. Return online and press Watch or Refresh snapshot. No automatic reconnect.");
+      setNotice(message);
     };
     const visibility = () => { if (document.hidden) stop(); };
     document.addEventListener("visibilitychange", visibility);
@@ -348,7 +356,9 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
               if (document.hidden || navigator.onLine === false) return;
               setNotice("Starting Swann cameras…");
               void fleet.watch(account.cameras.filter(c => c.kind === "swann"))
-                .then(() => setNotice("Tap a camera for fullscreen. Use its speaker to listen."))
+                .then((failed) => setNotice(failed?.length
+                  ? `${failed.join(", ")} could not start. Use each camera's Retry button.`
+                  : "Connections requested. LIVE appears when moving video is confirmed."))
                 .catch(() => setError("Could not start the wall. Please try again."));
             }} disabled={busy || !account.cameras.some(c => c.kind === "swann")}><Icon name="play" />Start wall</button> : <span className="vision-snapshot-hint"><Icon name="image" />Snapshots</span>}
           </footer>
@@ -356,12 +366,14 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
           <dialog ref={menu} className="vision-menu" aria-labelledby="vision-menu-title">
             <div className="vision-menu-heading"><h2 id="vision-menu-title">Vision menu</h2><button className="vision-icon" aria-label="Close menu" onClick={() => menu.current?.close()}><Icon name="close" /></button></div>
             <p className="vision-menu-account">Signed in as {account.username}</p>
+            <button className="vision-menu-action" onClick={() => { menu.current?.close(); setSessionsOpen(true); }}>Manage saved sign-ins</button>
             <button className="vision-menu-action" onClick={() => { fleet.stop(); setEpoch(v => v + 1); setNotice("Viewing stopped. Press Start wall when you're ready."); menu.current?.close(); }}><Icon name="stop" />Stop all cameras</button>
             <label className="vision-menu-toggle"><span><strong>Data Saver</strong><small>Keep Ring on snapshots, even in fullscreen.</small></span><input type="checkbox" checked={dataSaver} onChange={e => {fleet.stop();setDataSaver(e.target.checked);setEpoch(v=>v+1);}} /></label>
             <details><summary>Using Vision on your phone</summary><p>Tap a camera to open fullscreen. Ring stays on a snapshot until you press Play. Use the speaker to hear one camera at a time.</p><p>In Safari, tap Share, then Add to Home Screen for quick access.</p></details>
             <details><summary>Viewing and privacy</summary><p>Swann uses SD to save data, with up to five cameras at once. Connections last up to 15 minutes. Ring Live View lasts up to five minutes.</p><p>Leaving the page, locking your phone or going offline stops live viewing. Press Play or Start wall to resume.</p><Link href="/setup">Private access and recording playback</Link></details>
             <button className="vision-menu-action" disabled={busy} onClick={() => {menu.current?.close();void logout();}}>Sign out</button>
           </dialog>
+          {sessionsOpen ? <SavedSessions onClose={() => setSessionsOpen(false)} onExpired={expired} /> : null}
         </>}
 
       {error ? <p role="alert" className={account ? "vision-global-error" : "text-danger"}>{error}</p> : null}

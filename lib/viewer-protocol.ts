@@ -21,10 +21,35 @@ export const VIEWER_MAX_JSON = 65536;
 export const VIEWER_MAX_SDP = 48000;
 export const VIEWER_GATEWAY_ORIGIN = "https://mpdee-vision.tail03543e.ts.net:10000";
 export const VIEWER_MAX_SNAPSHOT_JSON = 1004096;
+export const VIEWER_FAILURE_MESSAGES = {
+  session_limit: "This account has reached its three saved sign-ins. Sign out an old session from another signed-in device, then try again.",
+  login_rate_limit: "Too many sign-in attempts. Please wait up to 15 minutes before trying again.",
+  stream_capacity: "The camera viewing capacity is in use. Stop another viewing session, then retry.",
+  start_rate_limit: "The hourly camera-start allowance has been reached. Please try again later.",
+  snapshot_rate_limit: "The snapshot refresh limit has been reached. Please wait before refreshing. Existing snapshots remain available.",
+  request_rate_limit: "The service is busy. Please wait before trying again.",
+} as const;
+export type ViewerFailureCode = keyof typeof VIEWER_FAILURE_MESSAGES;
+export function isViewerFailureCode(value: unknown): value is ViewerFailureCode {
+  return typeof value === "string" && Object.hasOwn(VIEWER_FAILURE_MESSAGES, value);
+}
 export const VIEWER_ACTIONS = [
-  "login", "session", "config", "offer", "poll", "heartbeat", "snapshot", "stop", "logout",
+  "login", "session", "sessions", "revoke-session", "config", "offer", "poll", "heartbeat", "snapshot", "stop", "logout",
 ] as const;
 export type ViewerAction = (typeof VIEWER_ACTIONS)[number];
+export type SavedSession = { id: string; issuedAt: number; expires: number; current: boolean };
+
+export function validSavedSessions(value: unknown): value is { sessions: SavedSession[]; limit: number } {
+  if (!exactFields(value, ["sessions", "limit"]) || value.limit !== 3 || !Array.isArray(value.sessions) ||
+      value.sessions.length > 3) return false;
+  return value.sessions.every((entry) => exactFields(entry, ["id", "issuedAt", "expires", "current"]) &&
+    typeof entry.id === "string" && /^[0-9a-f]{64}$/.test(entry.id) &&
+    Number.isSafeInteger(entry.issuedAt) && Number.isSafeInteger(entry.expires) &&
+    Number(entry.issuedAt) > 0 && Number(entry.expires) > Number(entry.issuedAt) &&
+    typeof entry.current === "boolean") &&
+    value.sessions.filter((entry) => entry.current).length === 1 &&
+    new Set(value.sessions.map((entry) => entry.id)).size === value.sessions.length;
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

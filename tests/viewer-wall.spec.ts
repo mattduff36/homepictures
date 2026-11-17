@@ -10,10 +10,18 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
     await route.fulfill({ response, headers });
   });
   const configs: Array<{camera:string; mode:string}> = [];
+  const revoked: string[] = [];
+  const currentId = 'a'.repeat(64);
+  const otherId = 'b'.repeat(64);
   await page.route('**/api/viewer/**', async route => {
     const action = new URL(route.request().url()).pathname.split('/').pop();
     if (action === 'session') return route.fulfill({ json: { username:'test', cameras:VIEWER_CAMERAS, expires:Date.now()/1000+3600 } });
     if (action === 'snapshot') return route.fulfill({ status:503, json:{error:'snapshot_unavailable'} });
+    if (action === 'sessions') return route.fulfill({ json: { limit:3, sessions:[
+      {id:currentId, issuedAt:1800000000, expires:1800604800, current:true},
+      ...(!revoked.length ? [{id:otherId, issuedAt:1800000000, expires:1800604800, current:false}] : []),
+    ] } });
+    if (action === 'revoke-session') { revoked.push(route.request().postDataJSON().id); return route.fulfill({json:{ok:true}}); }
     if (action === 'config') { configs.push(route.request().postDataJSON()); return route.fulfill({ status:503,json:{error:'test_unavailable'} }); }
     return route.fulfill({ json:{ok:true} });
   });
@@ -39,6 +47,17 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await page.getByRole('button',{name:'Open menu'}).click();
   await expect(page.getByRole('dialog',{name:'Vision menu'})).toBeVisible();
+  await page.getByRole('button',{name:'Manage saved sign-ins'}).click();
+  const saved = page.getByRole('dialog',{name:'Saved sign-ins',exact:true});
+  await expect(saved.getByRole('heading',{name:'This browser'})).toBeVisible();
+  await expect(saved.getByRole('button',{name:'Sign out this session'})).toHaveCount(1);
+  await saved.getByRole('button',{name:'Sign out this session'}).click();
+  await expect(saved.getByRole('heading',{name:'Other saved sign-in'})).toHaveCount(0);
+  expect(revoked).toEqual([otherId]);
+  expect(configs).toHaveLength(1);
+  await page.keyboard.press('Escape');
+  await expect(saved).toHaveCount(0);
+  await page.getByRole('button',{name:'Open menu'}).click();
   await page.getByRole('checkbox',{name:/Data Saver/}).check();
   await page.getByRole('button',{name:'Close menu'}).click();
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();

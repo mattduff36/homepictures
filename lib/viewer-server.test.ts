@@ -63,6 +63,37 @@ test("strict same-origin check rejects missing, cross-site and spoofed forwardin
   })), false);
 });
 
+test("saved sign-ins require authentication and validate the scoped session list", async () => {
+  const saved = { id: "a".repeat(64), issuedAt: 100, expires: 604900, current: true };
+  const result = await handleViewerRequest(request(), "sessions", async (_url, init) => {
+    assert.deepEqual(JSON.parse(String(init?.body)), { session });
+    return response({ sessions: [saved], limit: 3 });
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { sessions: [saved], limit: 3 });
+  assert.equal((await handleViewerRequest(request({}, {}, false), "sessions", noFetch)).status, 401);
+  assert.equal((await handleViewerRequest(request({ id: session }), "revoke-session", noFetch)).status, 400);
+  const revoked = await handleViewerRequest(request({ id: saved.id }), "revoke-session", async (_url, init) => {
+    assert.deepEqual(JSON.parse(String(init?.body)), { id: saved.id, session });
+    return response({ ok: true });
+  });
+  assert.equal(revoked.status, 200);
+  for (const invalid of [{ sessions: [saved, saved], limit: 3 },
+    { sessions: [{ ...saved, current: false }], limit: 3 }, { sessions: [saved], limit: 4 }]) {
+    assert.equal((await handleViewerRequest(request(), "sessions", async () => response(invalid))).status, 502);
+  }
+});
+
+test("only approved capacity codes reach the browser", async () => {
+  const result = await handleViewerRequest(request({ username: "owner", password: "example" }, {}, false), "login",
+    async () => response({ error: "private upstream text", code: "session_limit" }, 429));
+  assert.equal(result.status, 429);
+  assert.equal((await result.json()).code, "session_limit");
+  const unknown = await handleViewerRequest(request(), "session",
+    async () => response({ error: "private upstream text", code: "secret-private-data" }, 429));
+  assert.doesNotMatch(JSON.stringify(await unknown.json()), /private|secret/);
+});
+
 test("setup cookie cannot authenticate and unknown actions or client-chosen sessions are rejected", async () => {
   const anonymous = request({}, { Cookie: "homepictures_session=setup-token" }, false);
   assert.equal((await handleViewerRequest(anonymous, "session", noFetch)).status, 401);

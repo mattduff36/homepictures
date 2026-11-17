@@ -1,5 +1,6 @@
 import {
   exactFields, isLiveMode, isSdp, isViewerToken, validCameras, validPoll, VIEWER_CAMERA, VIEWER_PLAYBACK_MS,
+  VIEWER_FAILURE_MESSAGES, isViewerFailureCode, type ViewerFailureCode,
   type CameraId, type LiveMode, type ViewerCamera,
 } from "./viewer-protocol";
 
@@ -9,6 +10,8 @@ export type ViewerDiagnostics = {
 };
 export type PlayerState = {
   status: PlayerStatus; message: string; muted: boolean; diagnostics: ViewerDiagnostics;
+  expiresAt?: number | null;
+  remainingSeconds?: number | null;
 };
 export type VideoSink = {
   srcObject: MediaProvider | null; muted: boolean; readyState: number;
@@ -22,7 +25,7 @@ type PlayerDependencies = {
   stream?: () => MediaStream;
   sessionExpired?: () => void;
   timing?: { statsMs?: number; startupMs?: number; playbackMs?: number; gatheringMs?: number;
-    sessionMs?: number; signallingMs?: number };
+    sessionMs?: number; signallingMs?: number; authorityMs?: number };
 };
 export interface ViewerPeer {
   iceGatheringState: RTCIceGatheringState;
@@ -50,7 +53,7 @@ export const INITIAL_PLAYER_STATE: PlayerState = {
 };
 
 export class ViewerApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
   }
 }
@@ -65,10 +68,13 @@ export async function viewerApi(
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
   });
   if (!response.ok) {
-    void response.body?.cancel();
-    throw new ViewerApiError(response.status, response.status === 401 ? "Please sign in again." :
-      response.status === 429 ? "Please wait before trying again." :
-        "The camera is unavailable. Please try again.");
+    const failure = await response.json().catch(() => null);
+    const code: ViewerFailureCode | undefined = isViewerFailureCode(failure?.code) ? failure.code : undefined;
+    throw new ViewerApiError(response.status, code ? VIEWER_FAILURE_MESSAGES[code] : response.status === 401
+      ? "Your sign-in has expired or was revoked. Please sign in again."
+      : response.status === 429 ? "The viewing service has reached a limit. Please wait before retrying."
+      : response.status >= 500 ? "The camera gateway is temporarily unavailable. Please retry."
+      : "This camera connection is no longer available. Please retry.", code);
   }
   return response.json() as Promise<unknown>;
 }
@@ -136,6 +142,7 @@ export class ViewerPlayer {
   private signallingTimer?: ReturnType<typeof setInterval>;
   private startupTimer?: ReturnType<typeof setTimeout>;
   private limitTimer?: ReturnType<typeof setTimeout>;
+  private authorityTimer?: ReturnType<typeof setTimeout>;
   private polling = false;
   private signalling = false;
   private heartbeating = false;
@@ -161,6 +168,7 @@ export class ViewerPlayer {
     clearInterval(this.signallingTimer);
     clearTimeout(this.startupTimer);
     clearTimeout(this.limitTimer);
+    clearTimeout(this.authorityTimer);
     this.peer?.close();
     this.peer = null;
     this.stream?.getTracks().forEach((track) => track.stop());
@@ -174,7 +182,7 @@ export class ViewerPlayer {
     const lease = this.lease;
     this.lease = null;
     if (lease) this.releasePending = this.release(lease);
-    this.publish({ status, message, muted: true });
+    this.publish({ status, message, muted: true, expiresAt: null, remainingSeconds: null });
   }
 
   private async release(lease: string, generation = this.generation) {
@@ -188,6 +196,9 @@ export class ViewerPlayer {
     }
   }
 
+  get status() {
+    return this.state.status;
+  }
   get active() {
     return this.state.status === "playing" || this.state.status === "connecting";
   }
@@ -216,7 +227,7 @@ export class ViewerPlayer {
     this.label = label;
     const limitMessage = camera.startsWith("ring-")
       ? "Live View ended after five minutes. Press Play in fullscreen to start again."
-      : "The 15-minute viewing limit was reached. Press Watch to restart.";
+      : "The 15-minute viewing limit was reached. Press Play or Start wall to restart.";
     const playbackMs = Math.min(this.deps.timing?.playbackMs ?? VIEWER_PLAYBACK_MS,
       camera.startsWith("ring-") ? 300000 : VIEWER_PLAYBACK_MS);
     this.publish({ status: "connecting", message: `Connecting to ${label}...`, muted: true,
@@ -243,6 +254,7 @@ export class ViewerPlayer {
       this.lease = config.lease;
       const remaining = config.expires * 1000 - Date.now();
       if (remaining <= 0) throw new Error("Please retry.");
+      this.publish({ expiresAt: Math.min(config.expires * 1000, Date.now() + playbackMs), remainingSeconds: Math.ceil(remaining / 1000) });
       clearTimeout(this.limitTimer);
       this.limitTimer = setTimeout(() => {
         if (current()) this.stop(limitMessage);
@@ -289,6 +301,7 @@ export class ViewerPlayer {
       }
       await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
       if (!current()) return;
+      this.confirmAuthority(generation);
       this.statsTimer = setInterval(() => { void this.poll(generation, peer); },
         this.deps.timing?.statsMs ?? 1000);
       this.sessionTimer = setInterval(() => {
@@ -306,15 +319,31 @@ export class ViewerPlayer {
     }
   }
 
+  private confirmAuthority(generation: number) {
+    clearTimeout(this.authorityTimer);
+    this.authorityTimer = setTimeout(() => {
+      if (generation === this.generation) {
+        this.stop("The camera gateway could not confirm this session within 45 seconds. Please retry.", "error");
+      }
+    }, Math.min(this.deps.timing?.authorityMs ?? 45000, 45000));
+  }
+
   private async heartbeat(generation: number, signal: AbortSignal) {
     if (this.heartbeating || generation !== this.generation) return;
     this.heartbeating = true;
     try {
       const value = await this.deps.api("heartbeat", { lease: this.lease }, signal);
+      if (generation !== this.generation) return;
       if (!exactFields(value, ["ok"]) || value.ok !== true) throw new Error("Sign-in could not be checked.");
+      this.confirmAuthority(generation);
     } catch (error) {
       if (generation === this.generation) {
-        this.stop("Sign-in could not be confirmed. Please sign in again or retry.", "error");
+        // Keep the existing peer only within the gateway's unchanged 45-second authority deadline.
+        // Revocation and invalid responses still stop immediately; no new stream is started.
+        const transient = error instanceof ViewerApiError && error.status >= 500 ||
+          error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError";
+        if (transient) return;
+        this.stop(error instanceof Error ? error.message : "Sign-in could not be confirmed. Please retry.", "error");
         if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
       }
     } finally {
@@ -335,7 +364,7 @@ export class ViewerPlayer {
       }
     } catch (error) {
       if (generation === this.generation) {
-        this.stop("The camera connection ended. Please retry.", "error");
+        this.stop(error instanceof Error ? error.message : "The camera connection ended. Please retry.", "error");
         if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
       }
     } finally {
@@ -354,9 +383,12 @@ export class ViewerPlayer {
       const playing = progressing && this.previousFrames > 0 && diagnostics.relayVerified &&
         (this.deps.video()?.readyState ?? 0) >= 2;
       this.previousFrames = diagnostics.framesDecoded;
-      this.publish({ diagnostics });
+      this.publish({ diagnostics, remainingSeconds: this.state.expiresAt
+        ? Math.max(0, Math.ceil((this.state.expiresAt - Date.now()) / 1000)) : null });
       if (playing) {
         clearTimeout(this.startupTimer);
+        // Remote candidates are needed during setup. A healthy selected relay needs only heartbeats.
+        clearInterval(this.signallingTimer);
         this.publish({ status: "playing", message: `LIVE - ${this.label}` });
       } else if (this.state.status === "playing" && Date.now() - this.lastFrameAt > 8000) {
         this.stop("The picture stopped updating. Please retry.", "error");
@@ -447,6 +479,7 @@ export class ViewerFleet {
       const player = this.players.get(camera.id);
       return player?.active ? undefined : player?.start(camera.id, mode, camera.label);
     }));
+    return cameras.filter((camera) => this.players.get(camera.id)?.status === "error").map((camera) => camera.label);
   }
   async sound(camera: CameraId) {
     for (const [id, player] of this.players) if (id !== camera) player.mute();

@@ -7,6 +7,7 @@ import {
   validSnapshot, VIEWER_ACTIONS,
   VIEWER_COOKIE, VIEWER_GATEWAY_ORIGIN, VIEWER_MAX_JSON, VIEWER_SESSION_SECONDS,
   VIEWER_MAX_SNAPSHOT_JSON,
+  validSavedSessions, isViewerFailureCode, VIEWER_FAILURE_MESSAGES, type ViewerFailureCode,
   type ViewerAction,
 } from "./viewer-protocol";
 
@@ -16,7 +17,7 @@ const COOKIE_OPTIONS = {
 } as const;
 
 export class ViewerError extends Error {
-  constructor(public status: number, public event: string) {
+  constructor(public status: number, public event: string, public code?: ViewerFailureCode, public transport?: string) {
     super(event);
   }
 }
@@ -111,14 +112,19 @@ async function gateway(
       body: raw,
     });
     if (!response.ok) {
-      void response.body?.cancel();
+      const failure = await boundedJson(response, 2048).catch(() => null);
+      const code = response.status === 429 && isRecord(failure) && isViewerFailureCode(failure.code)
+        ? failure.code : undefined;
       throw new ViewerError([400, 401, 403, 413, 429].includes(response.status) ? response.status : 502,
-        "viewer_gateway_denied");
+        "viewer_gateway_denied", code);
     }
     return await boundedJson(response, action === "snapshot" ? VIEWER_MAX_SNAPSHOT_JSON : VIEWER_MAX_JSON);
   } catch (error) {
     if (error instanceof ViewerError) throw error;
-    throw new ViewerError(502, "viewer_gateway_unavailable");
+    const cause = error instanceof Error ? error.cause : null;
+    const transport = isRecord(cause) && typeof cause.code === "string" && /^[A-Z0-9_]{1,64}$/.test(cause.code)
+      ? cause.code : error instanceof Error && error.name === "TimeoutError" ? "TIMEOUT" : "NETWORK_ERROR";
+    throw new ViewerError(502, "viewer_gateway_unavailable", undefined, transport);
   }
 }
 
@@ -237,12 +243,20 @@ export async function handleViewerRequest(
       if (!exactFields(body, ["camera"]) || !isCameraId(body.camera) || !body.camera.startsWith("ring-")) {
         throw new ViewerError(400, "viewer_invalid_camera");
       }
+    } else if (action === "revoke-session") {
+      if (!exactFields(body, ["id"]) || typeof body.id !== "string" || !/^[0-9a-f]{64}$/.test(body.id)) {
+        throw new ViewerError(400, "viewer_invalid_session_id");
+      }
     } else if (!exactFields(body, [])) {
       throw new ViewerError(400, "viewer_unexpected_fields");
     }
     if (!isRecord(body)) throw new ViewerError(400, "viewer_invalid_json");
     clear = action === "logout";
     const value = await gateway(action, { ...body, session }, fetchImpl);
+    if (action === "sessions") {
+      if (!validSavedSessions(value)) throw new ViewerError(502, "viewer_invalid_response");
+      return json(value);
+    }
     if (action === "config") {
       if (!exactFields(value, ["lease", "expires", "camera"]) || !isViewerToken(value.lease) ||
           value.camera !== body.camera || typeof value.expires !== "number" ||
@@ -297,9 +311,10 @@ export async function handleViewerRequest(
     return response;
   } catch (error) {
     const failure = error instanceof ViewerError ? error : new ViewerError(503, "viewer_unavailable");
-    console.info(failure.event);
-    const response = json({ error: failure.status === 429
-      ? "Too many attempts. Please wait before trying again." : FAILURE }, failure.status);
+    console.info(failure.transport ? { event: failure.event, transport: failure.transport } : failure.event);
+    const response = json({ error: failure.code ? VIEWER_FAILURE_MESSAGES[failure.code] : failure.status === 429
+      ? "Too many attempts. Please wait before trying again." : FAILURE,
+      ...(failure.code ? { code: failure.code } : {}) }, failure.status);
     if (clear || failure.status === 401) clearCookie(response);
     return response;
   }
