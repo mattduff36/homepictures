@@ -458,6 +458,13 @@ export class ViewerFleet {
     }
     return this.watchCameras(cameras, mode);
   }
+  async retrySwann(camera: ViewerCamera) {
+    if (camera.kind !== "swann") throw new Error("Ring live requires fullscreen and explicit Play.");
+    const player = this.players.get(camera.id);
+    if (!player || player.active) return;
+    ++this.generation;
+    await player.start(camera.id, "live", camera.label);
+  }
   enterRingFullscreen(camera: CameraId) {
     if (!camera.startsWith("ring-")) throw new Error("Choose a Ring camera.");
     this.stop();

@@ -311,6 +311,27 @@ test("five-camera wall creates only five peers; selecting one retains it and sto
   assert.ok(fixtures.every((f) => f.peer.closed));
 });
 
+test("retrying one Swann camera preserves the other wall peers and cannot start Ring", async () => {
+  const fleet = new ViewerFleet();
+  const swann = VIEWER_CAMERAS.filter(camera => camera.kind === "swann");
+  const fixtures = swann.map(camera => {
+    const f = fixture();
+    fleet.register(camera.id, f.player);
+    return f;
+  });
+  await fleet.watch(swann);
+  const originalPeers = fixtures.map(f => f.peer);
+  fixtures[2].player.stop("Picture interrupted", "error");
+  await fleet.retrySwann(swann[2]);
+  for (let index = 0; index < fixtures.length; index++) {
+    const f = fixtures[index];
+    assert.equal(f.peer.closed, false);
+    assert.equal(f.calls.filter(call => call.action === "offer").length, index === 2 ? 2 : 1);
+    if (index !== 2) assert.equal(f.peer, originalPeers[index]);
+  }
+  await assert.rejects(fleet.retrySwann(VIEWER_CAMERAS[5]), /fullscreen/);
+});
+
 test("fleet keeps only one audio source and rejects mixed Ring walls", async () => {
   const fleet = new ViewerFleet();
   const a = fixture(), b = fixture();

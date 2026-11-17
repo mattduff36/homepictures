@@ -149,6 +149,11 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch }: {
     void (ring ? fleet.playRingFullscreen(camera) : fleet.watch([camera]))
       .catch(() => setError("Could not start this camera. Please try again."));
   }
+  function retry() {
+    if (document.hidden || navigator.onLine === false) { setError("You're offline. Reconnect, then press Retry."); return; }
+    setError("");
+    void fleet.retrySwann(camera).catch(() => setError("Could not restart this camera. Please try again."));
+  }
   const ageLabel = age === null ? "—" : age < 60 ? `${Math.floor(age / 10) * 10}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`;
   const snapshotDescription = age === null ? "Snapshot capture time unknown" : `Snapshot captured ${age}s ago${stale ? " (stale)" : ""}`;
   return (
@@ -166,7 +171,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch }: {
         {ring && !active ? <span className="vision-age vision-badge" title={snapshotDescription} aria-label={snapshotDescription}><Icon name="image" />{ageLabel}</span> : null}
         {ring && !active ? <button className="vision-icon vision-badge" disabled={snapshotBusy} onClick={() => void refreshSnapshot()} aria-label={`Refresh ${camera.label} snapshot`} title="Refresh snapshot"><Icon name="refresh" /></button> : null}
         {active ? <><button className="vision-icon vision-badge" disabled={state.status !== "playing"} aria-pressed={!state.muted} aria-label={`${state.muted ? "Unmute" : "Mute"} ${camera.label}`} onClick={() => void fleet.sound(camera.id)}><Icon name={state.muted ? "muted" : "sound"} /></button><button className="vision-icon vision-badge" onClick={() => player.current?.stop()} aria-label={`Stop ${camera.label}`}><Icon name="stop" /></button></> : null}
-        {!ring && !active && state.status !== "idle" ? <button className="vision-icon vision-badge" onClick={play} aria-label={`Retry ${camera.label}`} title="Retry camera"><Icon name="play" /></button> : null}
+        {!ring && !active && state.status !== "idle" ? <button className="vision-icon vision-badge" onClick={retry} aria-label={`Retry ${camera.label}`} title="Retry camera"><Icon name="play" /></button> : null}
       </div>
       {fullscreen ? <>
         <button className="vision-close vision-icon" onClick={closeFullscreen} aria-label="Close fullscreen"><Icon name="close" /></button>
