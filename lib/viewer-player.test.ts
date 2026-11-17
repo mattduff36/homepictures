@@ -386,11 +386,11 @@ test("all five Ring tiles stay on snapshots with Play only in fullscreen; still 
   const component = readFileSync(join(process.cwd(), "components", "camera-viewer.tsx"), "utf8");
   assert.equal(VIEWER_CAMERAS.filter((c) => c.kind === "ring").length, 5);
   assert.doesNotMatch(component, /RingPolicy|effectivePolicy|value="timed"|value="always"/);
-  assert.match(component, /!ring \|\| fullscreen/);
+  assert.match(component, /fullscreen \? <>/);
   assert.match(component, /fleet\.playRingFullscreen\(camera\)/);
   assert.match(component, /fleet\.enterRingFullscreen\(camera.id\)/);
   assert.match(component, /fleet\.leaveRingFullscreen\(camera.id\)/);
-  assert.match(component, /Snapshot · age unknown/);
+  assert.match(component, /Snapshot capture time unknown/);
   assert.match(component, /"offline", stop/);
   assert.match(component, /"online", stop/);
   assert.match(component, /generation !== snapshotGeneration\.current \|\| document\.hidden/);
