@@ -70,7 +70,7 @@ function attemptedAddresses(error: unknown): string[] {
   return [...addresses].slice(0, 8);
 }
 
-type Connection = { id: string; started: number };
+type Connection = { id: string };
 type Trace = { id: string; action: string; started: number; phase: string; active: boolean;
   observed?: boolean; connection?: string; remote?: RecordValue; headersMs?: number; codes?: string[] };
 
@@ -79,7 +79,6 @@ export function createGatewayDiagnostics(origin: string, emit: Log = record => c
   const target = new URL(origin);
   const context = new AsyncLocalStorage<Trace>();
   const requests = new WeakMap<object, Trace>();
-  const connections = new WeakMap<object, Connection>();
   const sockets = new WeakMap<object, Connection>();
   const failures = new WeakMap<object, Connection>();
   const subscriptions: Array<[string, (message: unknown) => void]> = [];
@@ -98,14 +97,6 @@ export function createGatewayDiagnostics(origin: string, emit: Log = record => c
       String(params.port) === (target.port || (target.protocol === "https:" ? "443" : "80")) &&
       params.protocol === target.protocol;
   }
-  function connection(params: RecordValue): Connection {
-    let value = connections.get(params);
-    if (!value) {
-      value = { id: randomBytes(8).toString("hex"), started: performance.now() };
-      connections.set(params, value);
-    }
-    return value;
-  }
   function linkError(trace: Trace, error: unknown) {
     trace.codes = [...new Set([...(trace.codes ?? []), ...transportCodes(error)])].slice(0, 8);
     walkErrors(error, item => {
@@ -113,24 +104,20 @@ export function createGatewayDiagnostics(origin: string, emit: Log = record => c
       if (value) trace.connection = value.id;
     });
   }
-  subscribe("undici:client:beforeConnect", ({ connectParams }) => {
-    if (!matches(connectParams)) return;
-    const value = connection(connectParams);
-    log({ event: "viewer_gateway_connection", phase: "connect_start", connection_id: value.id });
-  });
   subscribe("undici:client:connected", ({ connectParams, socket }) => {
     if (!matches(connectParams)) return;
-    const value = connection(connectParams);
+    const value = (object(socket) ? sockets.get(socket) : undefined) ?? { id: randomBytes(8).toString("hex") };
     if (object(socket)) sockets.set(socket, value);
     log({ event: "viewer_gateway_connection", phase: "connected", connection_id: value.id,
-      elapsed_ms: Math.round(performance.now() - value.started), ...peer(socket) });
+      connection_duration_ms: null, ...peer(socket) });
   });
   subscribe("undici:client:connectError", ({ connectParams, socket, error }) => {
     if (!matches(connectParams)) return;
-    const value = connection(connectParams);
+    const value = (object(socket) ? sockets.get(socket) : undefined) ??
+      (object(error) ? failures.get(error) : undefined) ?? { id: randomBytes(8).toString("hex") };
     if (object(error)) failures.set(error, value);
     log({ event: "viewer_gateway_connection", phase: "connect_error", connection_id: value.id,
-      elapsed_ms: Math.round(performance.now() - value.started), transport_codes: transportCodes(error),
+      connection_duration_ms: null, transport_codes: transportCodes(error),
       attempted_addresses: attemptedAddresses(error), ...peer(socket) });
   });
   subscribe("undici:request:create", ({ request }) => {

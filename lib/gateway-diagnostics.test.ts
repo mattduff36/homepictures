@@ -69,6 +69,8 @@ test("concurrent real fetches correlate their own socket and HTTP result without
       assert.equal(end?.remote_port, address.port);
       assert.match(String(end?.connection_id), /^[0-9a-f]{16}$/);
       assert.ok(logs.some(record => record.phase === "connected" && record.connection_id === end?.connection_id));
+      assert.ok(logs.filter(record => record.event === "viewer_gateway_connection")
+        .every(record => record.connection_duration_ms === null && record.elapsed_ms === undefined));
     }
     assert.doesNotMatch(JSON.stringify(logs), /signature-private|session-private|private-token|password-private|private-sdp|Authorization|Cookie/);
   } finally {
@@ -87,7 +89,8 @@ test("connection failure links only an identical error, redacts raw messages and
     { code: "UND_ERR_CONNECT_TIMEOUT" });
   try {
     await assert.rejects(diagnostics.run("a".repeat(32), "poll", async () => {
-      channel("undici:client:beforeConnect").publish({ connectParams: params });
+      // Undici does not guarantee stable parameter identity or request attribution across connection events.
+      channel("undici:client:beforeConnect").publish({ connectParams: { ...params } });
       channel("undici:client:connectError").publish({ connectParams: params, error: failure });
       channel("undici:client:connectError").publish({ connectParams: { ...params, hostname: "other.example" }, error: failure });
       throw new TypeError("fetch failed private-body", { cause: failure });

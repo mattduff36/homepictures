@@ -31,6 +31,12 @@ identifier until a real socket or identical propagated error links it to a
 request. Reused connections may serve several traces. Unknown attribution is
 left unknown; timing proximity is not asserted as a causal link.
 
+Connection-start events are deliberately not joined: the runtime does not
+guarantee stable parameter-object identity across connection events. Connection
+setup duration is therefore `null`, not zero or a guessed match. Request elapsed
+times and time to headers remain measured; these include queueing and connection
+setup rather than claiming a separate DNS/TCP/TLS duration.
+
 `network_events_observed=false` means the runtime did not expose the Undici
 request events (for example a fetch test double); attempt-level records still
 exist. `upstream_status=null` means fetch never returned response headers, not
