@@ -1,5 +1,17 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { VIEWER_CAMERAS } from '../lib/viewer-protocol';
+
+async function expectRows(page: Page, expected: number[]) {
+  const rows = await page.locator('.vision-tile:visible').evaluateAll(tiles => {
+    const counts = new Map<number, number>();
+    for (const tile of tiles) {
+      const top = Math.round(tile.getBoundingClientRect().top);
+      counts.set(top, (counts.get(top) ?? 0) + 1);
+    }
+    return [...counts].sort((a,b) => a[0]-b[0]).map(row => row[1]);
+  });
+  expect(rows).toEqual(expected);
+}
 
 test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page }, testInfo) => {
   // The isolated fixture uses HTTP; production retains its HTTPS upgrade policy.
@@ -28,11 +40,13 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await page.goto('/watch');
   await expect(page.getByRole('button',{name:'Open menu'})).toBeVisible();
   await expect(page.locator('.vision-tile:visible')).toHaveCount(10);
+  await expectRows(page, testInfo.project.name === 'desktop' ? [3,3,4] : [1,1,2,2,2,2]);
   expect(configs).toHaveLength(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('all-wall.png'),fullPage:true});
   await page.getByRole('button',{name:'Ring',exact:true}).click();
   await expect(page.locator('.vision-tile:visible')).toHaveCount(5);
+  await expectRows(page, testInfo.project.name === 'desktop' ? [2,3] : [1,1,1,2]);
   await page.screenshot({path:testInfo.outputPath('ring-wall.png'),fullPage:true});
   await expect(page.getByRole('button',{name:'Play',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
@@ -74,6 +88,7 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   expect(configs).toHaveLength(6);
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await page.setViewportSize({width:844,height:390});
+  await expectRows(page, [2,3]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('landscape-wall.png'),fullPage:true});
 });
