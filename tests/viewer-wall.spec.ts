@@ -47,7 +47,10 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
     if (action === 'recording') return route.fulfill({ json: { cameras: {
       'shed': {state:'recording', validForMs:20000},
     } } });
-    if (action === 'snapshot') return route.fulfill({ status:503, json:{error:'snapshot_unavailable'} });
+    if (action === 'snapshot') return route.fulfill({ json: {
+      camera: route.request().postDataJSON().camera, image:'/9j/2Q==', capturedAt:null, stale:true,
+      cachedAt:Math.floor(Date.now()/1000)-185, battery:94, weakWifi:true,
+    } });
     if (action === 'sessions') return route.fulfill({ json: { limit:5, sessions:[
       {id:currentId, issuedAt:1800000000, expires:1800604800, current:true},
       ...(!revoked.length ? [{id:otherId, issuedAt:1800000000, expires:1800604800, current:false}] : []),
@@ -91,7 +94,17 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   expect(configs).toHaveLength(5);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('all-wall.png'),fullPage:true});
-  await page.getByRole('button',{name:'Ring',exact:true}).click();
+  await expect(page.getByRole('button',{name:/Refresh.*snapshot/})).toHaveCount(0);
+  await expect(page.locator('[data-camera-id="ring-front"] .vision-age')).toHaveText('3m');
+  await expect(page.locator('[data-camera-id="ring-front"] .vision-ring-status')).toHaveText('94%Wi-Fi');
+  const dots = await page.getByRole('navigation',{name:'Camera walls'}).boundingBox();
+  const footer = await page.locator('[data-camera-id="ring-back"] .vision-name').boundingBox();
+  expect(dots!.y + dots!.height).toBeLessThan(footer!.y);
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByRole('button',{name:'Swann',exact:true})).toHaveAttribute('aria-pressed','true');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('button',{name:'All Cameras',exact:true})).toHaveAttribute('aria-pressed','true');
+  await page.keyboard.press('ArrowRight');
   await expect(page.locator('.vision-tile:visible')).toHaveCount(5);
   await expectRows(page, testInfo.project.name === 'desktop' ? [2,3] : [1,1,1,2]);
   await page.screenshot({path:testInfo.outputPath('ring-wall.png'),fullPage:true});

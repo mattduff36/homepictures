@@ -92,15 +92,24 @@ export function validPoll(value: unknown): value is {
       event.candidate.length <= 2048 && (event.sdpMLineIndex === 0 || event.sdpMLineIndex === 1));
 }
 
-export type ViewerSnapshot = { camera: CameraId; image: string; capturedAt: number | null; stale: boolean };
+export type ViewerSnapshot = {
+  camera: CameraId; image: string; capturedAt: number | null; stale: boolean;
+  cachedAt?: number; battery?: number; weakWifi?: boolean; eventAt?: number;
+};
 export function validSnapshot(value: unknown): value is ViewerSnapshot {
-  return exactFields(value, ["camera", "image", "capturedAt", "stale"]) &&
+  const timestamp = (at: unknown) => typeof at === "number" && Number.isSafeInteger(at) &&
+    at > 0 && at <= Date.now() / 1000 + 30;
+  return isRecord(value) && Object.keys(value).every(key =>
+    ["camera", "image", "capturedAt", "stale", "cachedAt", "battery", "weakWifi", "eventAt"].includes(key)) &&
     isCameraId(value.camera) && value.camera.startsWith("ring-") &&
-    typeof value.image === "string" && value.image.length >= 8 && value.image.length <= 1000000 &&
+    typeof value.image === "string" && value.image.length >= 8 && value.image.length <= 1_000_000 &&
     value.image.length % 4 === 0 && /^\/9j\/[A-Za-z0-9+/]*={0,2}$/.test(value.image) &&
-    (value.capturedAt === null || (Number.isSafeInteger(value.capturedAt) &&
-      Number(value.capturedAt) >= 0 && Number(value.capturedAt) <= Date.now() / 1000 + 30)) &&
-    typeof value.stale === "boolean";
+    (value.capturedAt === null || timestamp(value.capturedAt)) && typeof value.stale === "boolean" &&
+    (value.cachedAt === undefined || timestamp(value.cachedAt)) &&
+    (value.eventAt === undefined || timestamp(value.eventAt)) &&
+    (value.battery === undefined || (typeof value.battery === "number" && Number.isInteger(value.battery) &&
+      value.battery >= 0 && value.battery <= 100)) &&
+    (value.weakWifi === undefined || typeof value.weakWifi === "boolean");
 }
 
 export function isSdp(value: unknown): value is string {

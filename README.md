@@ -247,9 +247,9 @@ SD+audio streams with one sound source. Video starts muted/playsInline; Sound on
 is explicit. Fullscreen uses the full browser viewport with a close control and keyboard
 focus handling. The manifest reuses the existing icon.
 
-All five Ring cameras default to Snapshot. Refresh is explicit, shared/cache
-limited to at most one bridge fetch/camera per60s; no background battery polling.
-Still age/stale/unknown metadata is shown honestly. Ring live requires opening
+All five Ring cameras default to Snapshot. Opening a wall requests its Ring stills,
+with a shared limit of one bridge fetch per camera per 60 seconds. The age badge
+uses the capture time when available and identifies cache age in its tooltip. Ring live requires opening
 fullscreen and pressing Play, with an absolute five-minute maximum. Closing
 fullscreen, hiding the page, going offline or signing out stops live viewing.
 Data Saver disables Ring Play. Private app preferences are never read/written.
