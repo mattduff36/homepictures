@@ -2,6 +2,8 @@ import { createHmac, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { hasJsonContentType } from "./request";
+import { reportServerIncident } from "./diagnostics-server";
+import { incidentOperation } from "./diagnostics";
 import { gatewayDiagnostics, transportCodes } from "./gateway-diagnostics";
 import {
   exactFields, isRecord, isSdp, isViewerToken, isCameraId, isLiveMode, validCameras, validPoll,
@@ -18,7 +20,7 @@ const COOKIE_OPTIONS = {
 } as const;
 
 export class ViewerError extends Error {
-  constructor(public status: number, public event: string, public code?: ViewerFailureCode, public transport?: string) {
+  constructor(public status: number, public event: string, public code?: ViewerFailureCode, public transport?: string, public traceId = "") {
     super(event);
   }
 }
@@ -125,9 +127,14 @@ async function gateway(
       return await boundedJson(response, action === "snapshot" ? VIEWER_MAX_SNAPSHOT_JSON : VIEWER_MAX_JSON);
     }, () => upstreamStatus);
   } catch (error) {
-    if (error instanceof ViewerError) throw error;
+    if (error instanceof ViewerError) {
+      if (["viewer_invalid_json", "viewer_body_too_large", "viewer_body_timeout"].includes(error.event)) {
+        throw new ViewerError(502, error.event, undefined, error.transport, nonce);
+      }
+      error.traceId = nonce; throw error;
+    }
     const transport = transportCodes(error)[0] ?? "NETWORK_ERROR";
-    throw new ViewerError(502, "viewer_gateway_unavailable", undefined, transport);
+    throw new ViewerError(502, "viewer_gateway_unavailable", undefined, transport, nonce);
   }
 }
 
@@ -274,8 +281,10 @@ export async function handleViewerRequest(
       } catch (error) {
         try {
           await gateway("stop", { session, lease: value.lease }, fetchImpl);
-        } catch {
-          console.warn("viewer_lease_release_failed");
+        } catch (releaseError) {
+          reportServerIncident({code: "lease_cleanup_failed", page: "watch", operation: "stop", severity: "warning",
+            status: 502, camera: isCameraId(body.camera) ? body.camera : "", error: releaseError,
+            traceId: releaseError instanceof ViewerError ? releaseError.traceId : ""});
         }
         throw error;
       }
@@ -322,6 +331,17 @@ export async function handleViewerRequest(
     const response = json({ error: failure.code ? VIEWER_FAILURE_MESSAGES[failure.code] : failure.status === 429
       ? "Too many attempts. Please wait before trying again." : FAILURE,
       ...(failure.code ? { code: failure.code } : {}) }, failure.status);
+    if (failure.status >= 500) {
+      const code = failure.event.includes("turn") ? "turn_unavailable"
+        : failure.event === "viewer_gateway_unavailable" ? "gateway_unavailable"
+        : failure.event === "viewer_gateway_denied" ? "gateway_rejected"
+        : ["viewer_invalid_response", "viewer_invalid_json", "viewer_body_too_large", "viewer_body_timeout"].includes(failure.event)
+          ? "invalid_upstream_response" : "server_exception";
+      const reference = reportServerIncident({code, page: "watch", operation: incidentOperation(actionName),
+        severity: "error", status: failure.status, error,
+        traceId: failure.traceId});
+      if (reference) response.headers.set("X-Vision-Error-Reference", reference);
+    }
     if (clear || failure.status === 401) clearCookie(response);
     return response;
   }

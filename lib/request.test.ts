@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { hasJsonContentType, readJsonBody, readPasswordField } from "./request";
 
+test("a stalled setup body is cancelled at its deadline", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({cancel() {cancelled = true;}});
+  const request = new Request("https://example.test/api/login", {method: "POST", body, duplex: "half"} as RequestInit);
+  assert.deepEqual(await readJsonBody(request, 5), {ok: false, status: 408});
+  assert.equal(cancelled, true);
+});
+
 test("accepts application/json with a charset suffix", () => {
   const request = new Request("https://example.test/api/login", {
     method: "POST",

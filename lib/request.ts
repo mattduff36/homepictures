@@ -13,7 +13,7 @@ export function hasJsonContentType(request: Pick<Request, "headers">): boolean {
   return contentType.toLowerCase().split(";")[0]?.trim() === "application/json";
 }
 
-async function readLimitedBytes(request: Request): Promise<
+async function readLimitedBytes(request: Request, timeoutMs: number): Promise<
   { ok: true; bytes: Uint8Array } | { ok: false; status: number }
 > {
   const contentLength = request.headers.get("content-length");
@@ -34,24 +34,19 @@ async function readLimitedBytes(request: Request): Promise<
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Request timeout")), timeoutMs); });
+  try {
+    while (true) {
+      const { done, value } = await Promise.race([reader.read(), deadline]);
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_JSON_BODY_BYTES) return {ok: false, status: 413};
+      chunks.push(value);
     }
-    if (!value) {
-      continue;
-    }
-
-    total += value.byteLength;
-    if (total > MAX_JSON_BODY_BYTES) {
-      await reader.cancel();
-      return { ok: false, status: 413 };
-    }
-
-    chunks.push(value);
-  }
+  } catch { return {ok: false, status: 408}; }
+  finally { clearTimeout(timer); void reader.cancel().catch(() => undefined); }
 
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -63,8 +58,8 @@ async function readLimitedBytes(request: Request): Promise<
   return { ok: true, bytes };
 }
 
-export async function readJsonBody(request: Request): Promise<JsonReadResult> {
-  const limited = await readLimitedBytes(request);
+export async function readJsonBody(request: Request, timeoutMs = 5000): Promise<JsonReadResult> {
+  const limited = await readLimitedBytes(request, timeoutMs);
   if (!limited.ok) {
     return limited;
   }

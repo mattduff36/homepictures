@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { viewerApi, ViewerApiError } from "@/lib/viewer-player";
+import { viewerApi, ViewerApiError, safeViewerMessage, viewerErrorReference } from "@/lib/viewer-player";
 import { VIEWER_SAVED_SESSION_LIMIT, validSavedSessions, type SavedSession } from "@/lib/viewer-protocol";
 
 export function SavedSessions({ onClose, onExpired }: { onClose: () => void; onExpired: () => void }) {
@@ -10,6 +10,8 @@ export function SavedSessions({ onClose, onExpired }: { onClose: () => void; onE
   const [limit, setLimit] = useState(VIEWER_SAVED_SESSION_LIMIT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reference, setReference] = useState("");
+  const [refresh, setRefresh] = useState(0);
   const request = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -21,11 +23,12 @@ export function SavedSessions({ onClose, onExpired }: { onClose: () => void; onE
       if (!abort.signal.aborted) { setSessions(value.sessions); setLimit(value.limit); }
     }).catch((failure: unknown) => {
       if (abort.signal.aborted) return;
-      setError(failure instanceof Error ? failure.message : "Saved sign-ins could not be checked.");
+      setError(safeViewerMessage(failure, "Saved sign-ins could not be checked. Please retry."));
+      setReference(viewerErrorReference(failure));
       if (failure instanceof ViewerApiError && failure.status === 401) onExpired();
     });
     return () => abort.abort();
-  }, [onExpired]);
+  }, [onExpired, refresh]);
 
   async function revoke(id: string) {
     if (busy) return;
@@ -38,7 +41,8 @@ export function SavedSessions({ onClose, onExpired }: { onClose: () => void; onE
       if (!request.current?.signal.aborted) { setSessions(value.sessions); setLimit(value.limit); }
     } catch (failure) {
       if (request.current?.signal.aborted) return;
-      setError(failure instanceof Error ? failure.message : "Sign-out could not be confirmed. Please retry.");
+      setError(safeViewerMessage(failure, "Sign-out could not be confirmed. Please retry."));
+      setReference(viewerErrorReference(failure));
       if (failure instanceof ViewerApiError && failure.status === 401) onExpired();
     } finally {
       if (!request.current?.signal.aborted) setBusy(false);
@@ -55,6 +59,7 @@ export function SavedSessions({ onClose, onExpired }: { onClose: () => void; onE
       <p>Expires {new Date(session.expires * 1000).toLocaleString()}</p>
       {!session.current ? <button className="vision-menu-action" disabled={busy} onClick={() => void revoke(session.id)}>Sign out this session</button> : null}
     </section>)}
-    {error ? <p role="alert">{error}</p> : null}
+    {error ? <><p role="alert">{error}{reference ? <small> Reference: {reference}</small> : null}</p>
+      <button className="vision-menu-action" disabled={busy} onClick={() => {setError(""); setReference(""); setRefresh(value => value + 1);}}>Try checking again</button></> : null}
   </dialog>;
 }

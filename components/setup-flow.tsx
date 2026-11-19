@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AndroidLogo } from "@phosphor-icons/react/dist/csr/AndroidLogo";
 import { AppleLogo } from "@phosphor-icons/react/dist/csr/AppleLogo";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
@@ -9,6 +9,8 @@ import { LinuxLogo } from "@phosphor-icons/react/dist/csr/LinuxLogo";
 import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
 import { ShieldCheck } from "@phosphor-icons/react/dist/csr/ShieldCheck";
 import { WindowsLogo } from "@phosphor-icons/react/dist/csr/WindowsLogo";
+import { setupRequest } from "@/lib/client-request";
+import { reportBrowserIncident } from "@/lib/diagnostics-client";
 import { createCameraHealthProbe } from "@/lib/camera-health";
 import type { CameraHealthResult } from "@/lib/camera-health";
 import { SETUP_STAGE_TITLES } from "@/lib/setup-copy";
@@ -229,27 +231,35 @@ export function SetupFlow({ cameraUrl }: { cameraUrl: string }) {
     });
   }
 
+  const lockRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => lockRequest.current?.abort(), []);
+
   async function lockSetupPage() {
+    if (locking) return;
+    lockRequest.current?.abort();
+    const abort = new AbortController();
+    lockRequest.current = abort;
     setLocking(true);
     setLockError(null);
 
     try {
-      const response = await fetch("/api/logout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
+      const response = await setupRequest("logout", {}, abort.signal);
 
       if (!response.ok) {
+        reportBrowserIncident({code: "setup_request_failed", operation: "setup-logout", status: response.status, severity: "warning"});
         setLockError("Unable to lock the setup page. Try again.");
         return;
       }
 
       window.location.replace("/setup");
-    } catch {
-      setLockError("Unable to lock the setup page. Check your connection and try again.");
+    } catch (failure) {
+      if (abort.signal.aborted) return;
+      reportBrowserIncident({code: "setup_request_failed", operation: "setup-logout", error: failure, severity: "warning"});
+      setLockError(failure instanceof DOMException && failure.name === "TimeoutError"
+        ? "The request took too long. The setup page is not confirmed locked; please try again."
+        : "Unable to lock the setup page. Check your connection and try again.");
     } finally {
-      setLocking(false);
+      if (!abort.signal.aborted) setLocking(false);
     }
   }
 

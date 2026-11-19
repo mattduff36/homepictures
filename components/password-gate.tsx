@@ -1,11 +1,14 @@
 "use client";
 
-import { FormEvent, useId, useState } from "react";
+import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
 import { EyeSlash } from "@phosphor-icons/react/dist/csr/EyeSlash";
 import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
 
-type GateError = "invalid" | "rate" | "unavailable" | "network" | null;
+import { setupRequest } from "@/lib/client-request";
+import { reportBrowserIncident } from "@/lib/diagnostics-client";
+
+type GateError = "invalid" | "rate" | "unavailable" | "network" | "timeout" | null;
 
 function errorMessage(error: GateError): string {
   switch (error) {
@@ -15,6 +18,8 @@ function errorMessage(error: GateError): string {
       return "Too many attempts. Try again later.";
     case "unavailable":
       return "Setup is temporarily unavailable.";
+    case "timeout":
+      return "The sign-in request took too long. Please try again.";
     case "network":
       return "Unable to reach the setup page. Check your connection and try again.";
     default:
@@ -29,25 +34,28 @@ export function PasswordGate() {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<GateError>(null);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading) return;
+    request.current?.abort();
+    const abort = new AbortController();
+    request.current = abort;
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
+      const response = await setupRequest("login", {password}, abort.signal);
 
       if (response.status === 429) {
         setError("rate");
         return;
       }
 
-      if (response.status === 503) {
+      if (response.status >= 500) {
+        reportBrowserIncident({code: "setup_request_failed", operation: "setup-login", status: response.status, severity: "warning"});
         setError("unavailable");
         return;
       }
@@ -58,10 +66,12 @@ export function PasswordGate() {
       }
 
       window.location.replace("/setup");
-    } catch {
-      setError("network");
+    } catch (failure) {
+      if (abort.signal.aborted) return;
+      reportBrowserIncident({code: "setup_request_failed", operation: "setup-login", error: failure, severity: "warning"});
+      setError(failure instanceof DOMException && failure.name === "TimeoutError" ? "timeout" : "network");
     } finally {
-      setLoading(false);
+      if (!abort.signal.aborted) setLoading(false);
     }
   }
 

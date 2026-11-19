@@ -1,6 +1,16 @@
 import { test, expect, type Page } from '@playwright/test';
 import { VIEWER_CAMERAS } from '../lib/viewer-protocol';
 
+test.beforeEach(async ({page}) => {
+  // These UI tests deliberately reject mocked config requests before peer construction.
+  // Supply the absent capability in Windows WebKit so the same mocked failure path is exercised.
+  // Real unsupported-browser behaviour is independently covered in reliability.spec.ts.
+  await page.addInitScript(() => {
+    if (typeof window.RTCPeerConnection === 'undefined') Object.defineProperty(window, 'RTCPeerConnection', {value: class {}, configurable:true});
+    if (typeof window.MediaStream === 'undefined') Object.defineProperty(window, 'MediaStream', {value: class {}, configurable:true});
+  });
+});
+
 async function expectRows(page: Page, expected: number[]) {
   await expect.poll(() => page.locator('.vision-tile:visible').evaluateAll(tiles => {
     const counts = new Map<number, number>();

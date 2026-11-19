@@ -3,13 +3,15 @@
 /* eslint-disable @next/next/no-img-element -- Authenticated in-memory JPEGs must not enter an image optimiser/cache. */
 import Link from "next/link";
 import "./camera-wall.css";
+import { CameraBoundary } from "./camera-boundary";
+import { reportBrowserIncident } from "@/lib/diagnostics-client";
 import { SavedSessions } from "./saved-sessions";
 import { VisionStartup } from "./vision-startup";
 import { VisionSettings } from "./vision-settings";
 import { DEFAULT_VISION_PREFERENCES, VISION_PREFERENCES_KEY, normalizePreferences, effectiveLayout, featuredSlots, type VisionPreferences, type Wall } from "@/lib/vision-layout";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
 import {
-  INITIAL_PLAYER_STATE, validSession, viewerApi, ViewerApiError, ViewerFleet,
+  INITIAL_PLAYER_STATE, validSession, viewerApi, ViewerApiError, ViewerFleet, safeViewerMessage, viewerErrorReference,
   ViewerPlayer, type PlayerState,
 } from "@/lib/viewer-player";
 import {
@@ -122,6 +124,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
   const [snapshot, setSnapshot] = useState<ViewerSnapshot | null>(null);
   const [snapshotRequest, setSnapshotRequest] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [errorReference, setErrorReference] = useState("");
   const [now, setNow] = useState(0);
   const snapshotBusy = snapshotRequest === epoch;
   const [volumeOpen, setVolumeOpen] = useState(false);
@@ -184,8 +187,8 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
       if (event.key === "Escape") { event.preventDefault(); closeFullscreen(); }
       if (event.key !== "Tab") return;
       const controls = [...(container.current?.querySelectorAll<HTMLElement>(
-        "button:not(:disabled), summary, [href], [tabindex='0']",
-      ) ?? [])];
+        "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [href], [tabindex='0']",
+      ) ?? [])].filter(control => !control.hidden && control.getClientRects().length > 0);
       const first = controls[0], last = controls.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -208,7 +211,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
     snapshotAbort.current?.abort();
     snapshotAbort.current = abort;
     setSnapshotRequest(epoch);
-    setError("");
+    setError(""); setErrorReference("");
     try {
       const result = await viewerApi("snapshot", { camera: camera.id }, abort.signal);
       if (generation !== snapshotGeneration.current || document.hidden) return;
@@ -218,7 +221,9 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
       onSnapshot(camera.id, result);
     } catch (failure) {
       if (generation === snapshotGeneration.current) {
-        setError(failure instanceof ViewerApiError ? failure.message : "Snapshot unavailable. Tap refresh to retry.");
+        setError(safeViewerMessage(failure, "Snapshot unavailable. Tap refresh to retry."));
+        setErrorReference(viewerErrorReference(failure) || (failure instanceof ViewerApiError ? "" : reportBrowserIncident({code: "snapshot_failed", operation: "snapshot",
+          camera: camera.id, error: failure, severity: "warning"})));
         if (failure instanceof ViewerApiError && failure.status === 401) expired();
       }
     } finally {
@@ -289,7 +294,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
         <button className="vision-close vision-icon vision-chrome" onClick={closeFullscreen} aria-label="Close fullscreen"><Icon name="close" /></button>
         {ring && !active ? <div className="vision-play-area"><button className="vision-play vision-chrome" disabled={dataSaver} onClick={play}><Icon name="play" />Play</button><p>{dataSaver ? "Data Saver is on. Turn it off in the menu to play." : "Starts a Ring Live View · up to 5 minutes"}</p></div> : null}
       </> : null}
-      {(error && (!ring || fullscreen || snapshot)) || state.status === "error" ? <p className="vision-camera-error" role="alert">{error || state.message}</p> : null}
+      {(error && (!ring || fullscreen || snapshot)) || state.status === "error" ? <p className="vision-camera-error" role="alert">{error || state.message}{errorReference || state.reference ? <small> Reference: {errorReference || state.reference}</small> : null}</p> : null}
     </section>
   );
 }
@@ -300,8 +305,11 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   const authGeneration = useRef(0);
   const [account, setAccount] = useState<{ username: string; cameras: ViewerCamera[] } | null>(null);
   const [checking, setChecking] = useState(enabled);
+  const [sessionRetry, setSessionRetry] = useState(0);
+  const [canRetrySession, setCanRetrySession] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [errorReference, setErrorReference] = useState("");
   const [group, setGroup] = useState<"all" | "swann" | "ring">("all");
   const recordingStates = useRecordingStatus(group !== "ring" && !!account?.cameras.some(camera => camera.kind === "swann"));
   const menu = useRef<HTMLDialogElement>(null);
@@ -411,12 +419,15 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
       void viewerApi("session", {}, abort.signal).then((value) => {
         if (!validSession(value)) throw new Error("Invalid session");
         if (mounted.current && authGeneration.current === generation) {
-          setAccount(value); setStartup(true); setLaunchPending(true);
+          setCanRetrySession(false); setAccount(value); setStartup(true); setLaunchPending(true);
         }
       }).catch((failure: unknown) => {
         if (mounted.current && authGeneration.current === generation &&
             !(failure instanceof ViewerApiError && failure.status === 401)) {
-          setError("Sign-in could not be checked. Please try again.");
+          setError("Your saved sign-in could not be checked. You can retry without entering your password again.");
+          setCanRetrySession(true);
+          setErrorReference(viewerErrorReference(failure) || (failure instanceof ViewerApiError ? "" : reportBrowserIncident({code: "session_check_failed",
+            operation: "session", error: failure, severity: "warning"})));
         }
       }).finally(() => {
         if (mounted.current && authGeneration.current === generation) setChecking(false);
@@ -432,7 +443,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
       window.removeEventListener("offline", stop);
       window.removeEventListener("online", stop);
     };
-  }, [enabled, fleet, invalidateAuth]);
+  }, [enabled, fleet, invalidateAuth, sessionRetry]);
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -440,7 +451,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     const values = new FormData(form);
     const generation = ++authGeneration.current;
     setBusy(true);
-    setError("");
+    setError(""); setErrorReference("");
     try {
       await viewerApi("login", { username: String(values.get("username") ?? "").trim().toLowerCase(),
         password: String(values.get("password") ?? "") });
@@ -448,12 +459,14 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
       if (!validSession(session)) throw new Error("Sign-in could not be checked.");
       if (mounted.current && generation === authGeneration.current) {
         form.reset();
-        setAccount(session);
+        setCanRetrySession(false); setAccount(session);
         setStartup(true); setLaunchPending(true);
       }
     } catch (failure) {
       if (mounted.current && generation === authGeneration.current) {
-        setError(failure instanceof Error ? failure.message : "Sign-in failed. Please retry.");
+        setError(safeViewerMessage(failure, "Sign-in could not be checked. Please retry."));
+        setErrorReference(viewerErrorReference(failure) || (failure instanceof ViewerApiError ? "" : reportBrowserIncident({code: "session_check_failed",
+          operation: "login", error: failure, severity: "warning"})));
       }
     } finally {
       if (mounted.current && generation === authGeneration.current) setBusy(false);
@@ -467,14 +480,15 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     setLaunchPending(false);
     setEpoch((value) => value + 1);
     setBusy(true);
-    setError("");
+    setError(""); setErrorReference("");
     try {
       await viewerApi("logout");
       if (mounted.current && generation === authGeneration.current) { clearSessionView(); setAccount(null); }
     } catch (failure) {
       if (mounted.current && generation === authGeneration.current) {
         if (failure instanceof ViewerApiError && failure.status === 401) { clearSessionView(); setAccount(null); }
-        else setError("Sign-out could not be confirmed. Viewing stopped; please try signing out again.");
+        else { setError("Sign-out could not be confirmed. Viewing stopped; please try signing out again.");
+          setErrorReference(viewerErrorReference(failure)); }
       }
     } finally {
       if (mounted.current && generation === authGeneration.current) setBusy(false);
@@ -554,6 +568,9 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
         {!enabled ? <section className="vision-login-panel"><h1>Website viewing is unavailable</h1><p>Use private access to open your cameras.</p><Link href="/setup">Open private access setup</Link></section>
           : checking ? <p role="status">Checking sign-in…</p> : <section className="vision-login-panel">
             <h1>Sign in to Vision</h1><p>Your home cameras, wherever you are.</p>
+            {canRetrySession ? <button className="vision-primary" disabled={busy} onClick={() => {
+              setChecking(true); setCanRetrySession(false); setError(""); setErrorReference(""); setSessionRetry(value => value + 1);
+            }}>Check saved sign-in again</button> : null}
             <form onSubmit={login}>
               <label>Username<input name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={48} required disabled={busy} /></label>
               <label>Password<input name="password" type="password" autoComplete="current-password" maxLength={256} required disabled={busy} /></label>
@@ -566,10 +583,12 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
         <div className={`vision-grid vision-grid-${group}${featured ? " vision-featured" : ""}`} data-layout={featured ? "featured" : "grid"}
           onPointerDown={swipeStart} onPointerUp={swipeEnd} onPointerCancel={() => { pointerStart.current = null; }}
           onClickCapture={event => { if (suppressClick.current) { event.preventDefault(); event.stopPropagation(); } }}>
-          {account.cameras.map(camera => <CameraTile key={camera.id} camera={camera} fleet={fleet}
+          {account.cameras.map(camera => <CameraBoundary key={camera.id} camera={camera}
+            visible={group === "all" || group === camera.kind} slot={featured ? slots[camera.id] ?? "" : ""}>
+            <CameraTile camera={camera} fleet={fleet}
             visible={group === "all" || group === camera.kind} dataSaver={dataSaver} epoch={epoch} expired={expired}
             featured={featured} slot={slots[camera.id] ?? ""} paused={paused} onFeature={setFeaturedId}
-            onRotation={() => setPaused(value => !value)} onSolo={changeSolo} onSnapshot={receiveSnapshot} recording={recordingStates[camera.id] ?? "unknown"} />)}
+            onRotation={() => setPaused(value => !value)} onSolo={changeSolo} onSnapshot={receiveSnapshot} recording={recordingStates[camera.id] ?? "unknown"} /></CameraBoundary>)}
           {featured && selectedRing ? <div className={`vision-feature-ring-copy vision-feature-bottom-${ringIndex + 1}`} aria-hidden="true">
             {snapshots[selectedRing.id] ? <img className="vision-picture" src={`data:image/jpeg;base64,${snapshots[selectedRing.id].image}`} alt="" /> : <div className="vision-placeholder"><Icon name="image" /></div>}
             <RingWallBadges snapshot={snapshots[selectedRing.id]} now={wallNow} />
@@ -602,7 +621,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
           onLogout={() => { setSettingsOpen(false); void logout(); }} /> : null}
         {sessionsOpen ? <SavedSessions onClose={() => setSessionsOpen(false)} onExpired={expired} /> : null}
       </>}
-      {error ? <p role="alert" className={account ? "vision-global-error" : "vision-login-error"}>{error}<button aria-label="Dismiss message" onClick={() => setError("")}>×</button></p> : null}
+      {error ? <p role="alert" className={account ? "vision-global-error" : "vision-login-error"}>{error}{errorReference ? <small> Reference: {errorReference}</small> : null}<button aria-label="Dismiss message" onClick={() => setError("")}>×</button></p> : null}
     </main>
     {startup ? <VisionStartup ready={!checking && preferencesReady} onComplete={finishStartup} /> : null}
   </>;

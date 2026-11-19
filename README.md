@@ -1,5 +1,9 @@
 # Home Camera Access
 
+Website error recovery, safe incident logging and the local owner review/resolution
+workflow are documented in [docs/RELIABILITY.md](docs/RELIABILITY.md). The focused
+code audit and remaining optional improvements are in [docs/RELIABILITY-AUDIT.md](docs/RELIABILITY-AUDIT.md).
+
 Website camera viewer and private-access onboarding for authorised friends and
 family. `/watch` offers individually authorised Swann/Ring cameras without
 Tailscale or installation. Live media travels through WebRTC/TURN, not Vercel.

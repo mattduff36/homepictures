@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow } from "next/font/google";
 import "./globals.css";
+import { RuntimeRecovery } from "@/components/runtime-recovery";
 
 const barlow = Barlow({
   subsets: ["latin"],
@@ -36,7 +37,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${barlow.variable} h-full antialiased`}>
-      <body className="min-h-full bg-canvas font-sans text-ink">{children}</body>
+      <body className="min-h-full bg-canvas font-sans text-ink">
+        <noscript><div className="vision-noscript"><h1>MPDEE Vision needs JavaScript</h1>
+          <p>Enable JavaScript for this site, then reload to sign in and view cameras.</p><a href="/watch">Reload cameras</a></div></noscript>
+        {children}<RuntimeRecovery />
+      </body>
     </html>
   );
 }

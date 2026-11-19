@@ -1,8 +1,12 @@
 import {
-  exactFields, isLiveMode, isSdp, isViewerToken, validCameras, validPoll, VIEWER_CAMERA, VIEWER_PLAYBACK_MS,
+  exactFields, isCameraId, isLiveMode, isSdp, isViewerToken, validCameras, validPoll, VIEWER_CAMERA, VIEWER_PLAYBACK_MS,
   VIEWER_FAILURE_MESSAGES, isViewerFailureCode, type ViewerFailureCode,
   type CameraId, type LiveMode, type ViewerCamera,
 } from "./viewer-protocol";
+
+import { reportBrowserIncident } from "./diagnostics-client";
+import { incidentOperation, isIncidentId } from "./diagnostics";
+import { requestDeadline } from "./client-request";
 
 export type PlayerStatus = "idle" | "connecting" | "playing" | "stopped" | "error";
 export type ViewerDiagnostics = {
@@ -12,6 +16,7 @@ export type PlayerState = {
   status: PlayerStatus; message: string; muted: boolean; diagnostics: ViewerDiagnostics;
   expiresAt?: number | null;
   remainingSeconds?: number | null;
+  reference?: string;
 };
 export type VideoSink = {
   srcObject: MediaProvider | null; muted: boolean; readyState: number;
@@ -53,37 +58,70 @@ export const INITIAL_PLAYER_STATE: PlayerState = {
 };
 
 export class ViewerApiError extends Error {
-  constructor(public status: number, message: string, public code?: string) {
+  constructor(public status: number, message: string, public code?: string, public reference = "") {
     super(message);
   }
 }
-
+class ViewerPlaybackError extends Error {}
+export function safeViewerMessage(error: unknown, fallback = "Something went wrong. Please try again."): string {
+  return error instanceof ViewerApiError || error instanceof ViewerPlaybackError ? error.message : fallback;
+}
+export function viewerErrorReference(error: unknown): string {
+  return error instanceof ViewerApiError && isIncidentId(error.reference) ? error.reference : "";
+}
+function expectedViewerFailure(error: unknown) {
+  return error instanceof ViewerApiError && [401, 403, 429].includes(error.status);
+}
 function transientGatewayFailure(error: unknown) {
-  return error instanceof ViewerApiError && error.status >= 500 ||
+  return error instanceof ViewerApiError && (error.status >= 500 || error.status === 0) ||
     error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError";
 }
 
 export async function viewerApi(
   action: string, body: Record<string, unknown> = {}, signal?: AbortSignal,
 ): Promise<unknown> {
-  const response = await fetch(`/api/viewer/${action}`, {
-    method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
-    keepalive: action === "stop" || action === "logout",
-    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
-  });
-  if (!response.ok) {
-    const failure = await response.json().catch(() => null);
-    const code: ViewerFailureCode | undefined = isViewerFailureCode(failure?.code) ? failure.code : undefined;
-    throw new ViewerApiError(response.status, code ? VIEWER_FAILURE_MESSAGES[code] : response.status === 401
-      ? action === "login" ? "The username or password was not accepted. Please check and try again."
-        : "Your sign-in has expired or was revoked. Please sign in again."
-      : response.status === 429 ? "The viewing service has reached a limit. Please wait before retrying."
-      : response.status >= 500 ? action === "snapshot" ? "Snapshot unavailable. Refresh to retry."
-        : "The camera gateway is temporarily unavailable. Please retry."
-      : "This camera connection is no longer available. Please retry.", code);
-  }
-  return response.json() as Promise<unknown>;
+  const deadline = requestDeadline(signal);
+  try {
+    const response = await fetch(`/api/viewer/${action}`, {
+      method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
+      keepalive: action === "stop" || action === "logout",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: deadline.signal,
+    });
+    if (!response.ok) {
+      const failure = await response.json().catch(() => null);
+      const code: ViewerFailureCode | undefined = isViewerFailureCode(failure?.code) ? failure.code : undefined;
+      const serverReference = response.headers.get("x-vision-error-reference");
+      const reference = isIncidentId(serverReference) ? serverReference : "";
+      const report = ![401, 403, 429].includes(response.status) && action !== "stop" ? reportBrowserIncident({
+        code: "viewer_request_failed", operation: incidentOperation(action), status: response.status,
+        camera: isCameraId(body.camera) ? body.camera : "", reference, severity: "warning",
+      }) : "";
+      throw new ViewerApiError(response.status, code ? VIEWER_FAILURE_MESSAGES[code] : response.status === 401
+        ? action === "login" ? "The username or password was not accepted. Please check and try again."
+          : "Your sign-in has expired or was revoked. Please sign in again."
+        : response.status === 429 ? "The viewing service has reached a limit. Please wait before retrying."
+        : response.status >= 500 ? action === "snapshot" ? "Snapshot unavailable. Refresh to retry."
+          : "The camera gateway is temporarily unavailable. Please retry."
+        : "This camera connection is no longer available. Please retry.", code, reference || report);
+    }
+    try { return await response.json() as unknown; }
+    catch (error) {
+      if (deadline.signal.aborted) throw error;
+      const reference = reportBrowserIncident({code: "viewer_response_invalid", operation: incidentOperation(action),
+        error, camera: isCameraId(body.camera) ? body.camera : "", severity: "warning"});
+      throw new ViewerApiError(502, "The camera service returned an unreadable response. Please retry.", "invalid_response", reference);
+    }
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+    if (error instanceof ViewerApiError) throw error;
+    const timeout = deadline.timedOut();
+    const reference = action === "stop" ? "" : reportBrowserIncident({code: timeout ? "viewer_timeout" : "viewer_network_failed",
+      operation: incidentOperation(action), error, camera: isCameraId(body.camera) ? body.camera : "", severity: "warning"});
+    throw new ViewerApiError(0, timeout ? "The request took too long. Please try again."
+      : typeof navigator !== "undefined" && navigator.onLine === false ? "You're offline. Reconnect, then try again."
+      : "The camera service could not be reached. Check your connection and try again.",
+    timeout ? "request_timeout" : "network_unavailable", reference);
+  } finally { deadline.dispose(); }
 }
 
 export function waitForGathering(peer: ViewerPeer, signal: AbortSignal, timeoutMs = 12000) {
@@ -97,12 +135,12 @@ export function waitForGathering(peer: ViewerPeer, signal: AbortSignal, timeoutM
     const change = () => {
       if (peer.iceGatheringState === "complete") finish();
     };
-    const abort = () => finish(new Error("Stopped"));
+    const abort = () => finish(new ViewerPlaybackError("Stopped"));
     // Optional TURN transports can remain pending after usable relay candidates arrive.
     // This exchange is non-trickle: send the bounded gathered offer at the deadline.
     const timer = setTimeout(() => {
       const hasRelay = /^a=candidate:.* typ relay(?: |\r?$)/m.test(peer.localDescription?.sdp ?? "");
-      finish(hasRelay ? undefined : new Error("Connection timed out. Please retry."));
+      finish(hasRelay ? undefined : new ViewerPlaybackError("Connection timed out. Please retry."));
     }, timeoutMs);
     peer.addEventListener("icegatheringstatechange", change);
     signal.addEventListener("abort", abort, { once: true });
@@ -154,6 +192,7 @@ export class ViewerPlayer {
   private signalling = false;
   private heartbeating = false;
   private label = "Back Garden";
+  private camera: CameraId = VIEWER_CAMERA;
   private previousFrames = 0;
   private lastFrameAt = 0;
   private releasePending: Promise<void> = Promise.resolve();
@@ -166,7 +205,7 @@ export class ViewerPlayer {
     this.deps.update(this.state);
   }
 
-  stop(message = "Stopped. Press Play to start again.", status: PlayerStatus = "stopped") {
+  stop(message = "Stopped. Press Play to start again.", status: PlayerStatus = "stopped", report = true) {
     ++this.generation;
     this.abort?.abort();
     this.abort = null;
@@ -189,7 +228,11 @@ export class ViewerPlayer {
     const lease = this.lease;
     this.lease = null;
     if (lease) this.releasePending = this.release(lease);
-    this.publish({ status, message, muted: true, expiresAt: null, remainingSeconds: null });
+    const reference = status === "error" && report ? reportBrowserIncident({
+      code: message === "The picture stopped updating. Please retry." ? "playback_stalled" : "playback_failed",
+      operation: "playback", camera: this.camera, severity: "warning",
+    }) : "";
+    this.publish({ status, message, reference, muted: true, expiresAt: null, remainingSeconds: null });
   }
 
   private async release(lease: string, generation = this.generation) {
@@ -220,8 +263,16 @@ export class ViewerPlayer {
   }
 
   async start(camera: CameraId = VIEWER_CAMERA, mode: LiveMode = "live", label = "Back Garden") {
-    if (!isLiveMode(camera, mode)) throw new Error("Ring live requires fullscreen and explicit Play.");
+    if (!isLiveMode(camera, mode)) throw new ViewerPlaybackError("Ring live requires fullscreen and explicit Play.");
+    this.camera = camera;
     this.stop("", "idle");
+    if (!this.deps.peer && (typeof RTCPeerConnection === "undefined" || typeof MediaStream === "undefined" ||
+        typeof window !== "undefined" && window.isSecureContext === false)) {
+      this.stop("This browser cannot play live cameras. Open Vision in an up-to-date Chrome, Edge or Safari browser. Ring snapshots remain available.", "error", false);
+      const reference = reportBrowserIncident({code: "unsupported_browser", operation: "playback", camera, severity: "warning"});
+      this.publish({reference});
+      return;
+    }
     const generation = this.generation;
     const current = () => generation === this.generation;
     const abort = new AbortController();
@@ -252,7 +303,7 @@ export class ViewerPlayer {
       if (!exactFields(config, ["lease", "camera", "expires", "iceServers"]) ||
           !isViewerToken(config.lease) || config.camera !== camera ||
           !Array.isArray(config.iceServers) || typeof config.expires !== "number") {
-        throw new Error("The camera is unavailable. Please retry.");
+        throw new ViewerPlaybackError("The camera is unavailable. Please retry.");
       }
       if (!current()) {
         await this.release(config.lease, generation);
@@ -260,7 +311,7 @@ export class ViewerPlayer {
       }
       this.lease = config.lease;
       const remaining = config.expires * 1000 - Date.now();
-      if (remaining <= 0) throw new Error("Please retry.");
+      if (remaining <= 0) throw new ViewerPlaybackError("Please retry.");
       this.publish({ expiresAt: Math.min(config.expires * 1000, Date.now() + playbackMs), remainingSeconds: Math.ceil(remaining / 1000) });
       clearTimeout(this.limitTimer);
       this.limitTimer = setTimeout(() => {
@@ -273,7 +324,7 @@ export class ViewerPlayer {
       const stream = (this.deps.stream ?? (() => new MediaStream()))();
       this.stream = stream;
       const video = this.deps.video();
-      if (!video) throw new Error("Video is unavailable. Please retry.");
+      if (!video) throw new ViewerPlaybackError("Video is unavailable. Please retry.");
       video.muted = true;
       video.srcObject = stream;
       peer.addEventListener("track", (event) => {
@@ -300,11 +351,11 @@ export class ViewerPlayer {
       await waitForGathering(peer, abort.signal, this.deps.timing?.gatheringMs ?? 12000);
       if (!current()) return;
       const sdp = peer.localDescription?.sdp;
-      if (!isSdp(sdp)) throw new Error("Connection could not start. Please retry.");
+      if (!isSdp(sdp)) throw new ViewerPlaybackError("Connection could not start. Please retry.");
       const answer = await this.deps.api("offer", { camera, lease: this.lease, sdp }, abort.signal);
       if (!current()) return;
       if (!exactFields(answer, ["type", "sdp"]) || answer.type !== "answer" || !isSdp(answer.sdp)) {
-        throw new Error("Connection could not start. Please retry.");
+        throw new ViewerPlaybackError("Connection could not start. Please retry.");
       }
       await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
       if (!current()) return;
@@ -320,7 +371,9 @@ export class ViewerPlayer {
       await this.signals(generation, peer, abort.signal);
     } catch (error) {
       if (current()) {
-        this.stop(error instanceof Error ? error.message : "Please retry.", "error");
+        this.stop(safeViewerMessage(error, "This camera could not start. Please retry."), "error", !expectedViewerFailure(error));
+        const reference = viewerErrorReference(error);
+        if (reference) this.publish({reference});
         if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
       }
     }
@@ -341,14 +394,16 @@ export class ViewerPlayer {
     try {
       const value = await this.deps.api("heartbeat", { lease: this.lease }, signal);
       if (generation !== this.generation) return;
-      if (!exactFields(value, ["ok"]) || value.ok !== true) throw new Error("Sign-in could not be checked.");
+      if (!exactFields(value, ["ok"]) || value.ok !== true) throw new ViewerPlaybackError("Sign-in could not be checked.");
       this.confirmAuthority(generation);
     } catch (error) {
       if (generation === this.generation) {
         // Keep the existing peer only within the gateway's unchanged 45-second authority deadline.
         // Revocation and invalid responses still stop immediately; no new stream is started.
         if (transientGatewayFailure(error)) return;
-        this.stop(error instanceof Error ? error.message : "Sign-in could not be confirmed. Please retry.", "error");
+        this.stop(safeViewerMessage(error, "Sign-in could not be confirmed. Please retry."), "error", !expectedViewerFailure(error));
+        const reference = viewerErrorReference(error);
+        if (reference) this.publish({reference});
         if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
       }
     } finally {
@@ -362,7 +417,7 @@ export class ViewerPlayer {
     try {
       const value = await this.deps.api("poll", { lease: this.lease }, signal);
       if (generation !== this.generation) return;
-      if (!validPoll(value) || value.closed) throw new Error("The camera connection ended. Please retry.");
+      if (!validPoll(value) || value.closed) throw new ViewerPlaybackError("The camera connection ended. Please retry.");
       for (const event of value.events) {
         if (generation !== this.generation) return;
         await peer.addIceCandidate(event);
@@ -372,7 +427,9 @@ export class ViewerPlayer {
         // A setup poll may still be in flight when decoded video stops further polls.
         // Keep an established peer on a transient failure under the heartbeat deadline.
         if (this.state.status === "playing" && transientGatewayFailure(error)) return;
-        this.stop(error instanceof Error ? error.message : "The camera connection ended. Please retry.", "error");
+        this.stop(safeViewerMessage(error, "The camera connection ended. Please retry."), "error", !expectedViewerFailure(error));
+        const reference = viewerErrorReference(error);
+        if (reference) this.publish({reference});
         if (error instanceof ViewerApiError && error.status === 401) this.deps.sessionExpired?.();
       }
     } finally {
@@ -454,19 +511,19 @@ export class ViewerFleet {
   }
   async watch(cameras: ViewerCamera[], mode: LiveMode = "live") {
     if (cameras.some((camera) => camera.kind === "ring")) {
-      throw new Error("Choose one camera in fullscreen and press Play for Ring Live View.");
+      throw new ViewerPlaybackError("Choose one camera in fullscreen and press Play for Ring Live View.");
     }
     return this.watchCameras(cameras, mode);
   }
   async retrySwann(camera: ViewerCamera) {
-    if (camera.kind !== "swann") throw new Error("Ring live requires fullscreen and explicit Play.");
+    if (camera.kind !== "swann") throw new ViewerPlaybackError("Ring live requires fullscreen and explicit Play.");
     const player = this.players.get(camera.id);
     if (!player || player.active) return;
     ++this.generation;
     await player.start(camera.id, "live", camera.label);
   }
   enterRingFullscreen(camera: CameraId) {
-    if (!camera.startsWith("ring-")) throw new Error("Choose a Ring camera.");
+    if (!camera.startsWith("ring-")) throw new ViewerPlaybackError("Choose a Ring camera.");
     this.stop();
     this.fullscreenRing = camera;
   }
@@ -476,14 +533,14 @@ export class ViewerFleet {
   }
   async playRingFullscreen(camera: ViewerCamera) {
     if (camera.kind !== "ring" || this.fullscreenRing !== camera.id) {
-      throw new Error("Open this Ring camera fullscreen, then press Play.");
+      throw new ViewerPlaybackError("Open this Ring camera fullscreen, then press Play.");
     }
     return this.watchCameras([camera], "manual");
   }
   private async watchCameras(cameras: ViewerCamera[], mode: LiveMode) {
     if (!cameras.length || cameras.length > 5 || new Set(cameras.map((c) => c.id)).size !== cameras.length ||
         (cameras.some((c) => c.kind === "ring") && cameras.length !== 1)) {
-      throw new Error("Choose one camera or the Swann wall.");
+      throw new ViewerPlaybackError("Choose one camera or the Swann wall.");
     }
     const generation = ++this.generation;
     const wanted = new Set(cameras.map((c) => c.id));
@@ -509,6 +566,6 @@ export async function fullscreenVideo(video: HTMLVideoElement) {
   } else if (video.requestFullscreen) {
     await video.requestFullscreen();
   } else {
-    throw new Error("Fullscreen is unavailable in this browser.");
+    throw new ViewerPlaybackError("Fullscreen is unavailable in this browser.");
   }
 }

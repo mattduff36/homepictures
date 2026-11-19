@@ -90,6 +90,42 @@ function fixture(apiOverride?: (action: string, body: Record<string, unknown>) =
 }
 async function pause(ms = 15) { await new Promise((resolve) => setTimeout(resolve, ms)); }
 
+test("missing browser WebRTC support fails before requesting a camera lease", async () => {
+  const calls: string[] = [];
+  const states: PlayerState[] = [];
+  const original = Object.getOwnPropertyDescriptor(globalThis, "RTCPeerConnection");
+  Object.defineProperty(globalThis, "RTCPeerConnection", {configurable: true, value: undefined});
+  try {
+    const player = new ViewerPlayer({video: () => null, update: state => states.push(state),
+      api: async action => {calls.push(action); return {};}});
+    players.push(player);
+    await player.start();
+    assert.deepEqual(calls, []);
+    assert.equal(player.status, "error");
+    assert.match(states.at(-1)!.message, /browser cannot play live cameras/);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "RTCPeerConnection", original);
+    else Reflect.deleteProperty(globalThis, "RTCPeerConnection");
+  }
+});
+
+test("transport and invalid JSON failures expose safe messages and preserve server references", async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {throw new TypeError("private-url-and-password");};
+    await assert.rejects(viewerApi("session"), error => error instanceof ViewerApiError && error.status === 0 &&
+      /could not be reached/.test(error.message) && !/private/.test(error.message));
+    globalThis.fetch = async () => new Response("private-invalid-json", {status: 200});
+    await assert.rejects(viewerApi("session"), error => error instanceof ViewerApiError && error.code === "invalid_response" &&
+      !/private/.test(error.message));
+    const reference = "a".repeat(32);
+    globalThis.fetch = async () => new Response("{}", {status: 502, headers: {"X-Vision-Error-Reference": reference}});
+    await assert.rejects(viewerApi("session"), error => error instanceof ViewerApiError && error.reference === reference);
+    const abort = new AbortController(); abort.abort();
+    await assert.rejects(viewerApi("session", {}, abort.signal), error => error instanceof DOMException && error.name === "AbortError");
+  } finally {globalThis.fetch = original;}
+});
+
 test("API errors distinguish rejected credentials, expired sessions and unavailable snapshots", async () => {
   const original = globalThis.fetch;
   try {
@@ -314,6 +350,22 @@ test("five-camera wall creates only five peers; selecting one retains it and sto
   assert.equal(fixtures[0].calls.filter((call) => call.action === "offer").length, 1);
   fleet.stop();
   assert.ok(fixtures.every((f) => f.peer.closed));
+});
+
+test("unmounting a failed camera tile releases only its registered player", async () => {
+  const fleet = new ViewerFleet();
+  const first = fixture(), second = fixture();
+  const unregister = fleet.register("back-garden", first.player);
+  fleet.register("front-door", second.player);
+  await fleet.watch(VIEWER_CAMERAS.filter(camera => camera.id === "back-garden" || camera.id === "front-door"));
+  unregister();
+  await first.player.waitForRelease();
+  assert.equal(first.peer.closed, true);
+  assert.equal(first.trackStopped, true);
+  assert.equal(first.video.srcObject, null);
+  assert.equal(first.calls.filter(call => call.action === "stop").length, 1);
+  assert.equal(second.peer.closed, false);
+  assert.equal(second.player.active, true);
 });
 
 test("retrying one Swann camera preserves the other wall peers and cannot start Ring", async () => {

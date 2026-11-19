@@ -3,6 +3,8 @@ import { STATIC_SECURITY_HEADERS } from "./lib/security-headers";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  env: { NEXT_PUBLIC_APP_RELEASE: /^[0-9a-f]{7,40}$/.test(process.env.VERCEL_GIT_COMMIT_SHA ?? "")
+    ? process.env.VERCEL_GIT_COMMIT_SHA : "local" },
   async headers() {
     return [
       {
