@@ -16,6 +16,10 @@ It adds no camera start, reconnect loop, third-party monitoring service or publi
 
 Camera policies are unchanged: Swann starts once after authentication; Ring live requires fullscreen and explicit Play; hidden/offline/Stop/expired leases require explicit resume. Do not label an intentional camera outage as a fault needing repair. The owner confirmed both Shed and Back Door were intentionally offline for separate testing.
 
+The camera overlay actions hide after three idle seconds. The first touch restores them without opening a camera or requesting live viewing; subsequent touches work normally. Keyboard focus, an open menu/settings/saved-sign-in dialog, and a held pointer keep controls available. Activity restores the overlays. Passive badge backgrounds and borders fade after ten idle seconds, retaining white text and a contrast shadow; recording indicators and error messages remain visible. Large camera Play controls use an accessible circular icon with a transparent triangle.
+
+The wall, fullscreen camera and startup layer fill their fixed viewport edges without a competing dynamic-height declaration. Camera overlays use the actual cell distance from each screen edge and CSS safe-area insets, so interior cells do not acquire unnecessary notch padding. Insets are remeasured after layout/resize/pageshow, without a polling loop or camera restart. Desktop/WebKit layout fixtures are not proof of a physical iPhone Home Screen launch: confirm a cold portrait launch before rotating when accepting sizing changes.
+
 ## Event path and privacy
 
 `instrumentation-client.ts`, React boundaries and controlled request/player failures create a closed-schema event. The browser sends up to five events (at most 16 KiB) to same-origin POST `/api/diagnostics`. The server validates exact fields and reconstructs source, receipt timestamp, release and severity. Client trace IDs are discarded. Same-origin checks are not a claim of trusted identity: these reports remain untrusted operational observations.

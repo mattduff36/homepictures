@@ -8,6 +8,8 @@ import { reportBrowserIncident } from "@/lib/diagnostics-client";
 import { SavedSessions } from "./saved-sessions";
 import { VisionStartup } from "./vision-startup";
 import { VisionSettings } from "./vision-settings";
+import { useViewerChrome } from "./use-viewer-chrome";
+import { useViewerInsets } from "./use-viewer-insets";
 import { DEFAULT_VISION_PREFERENCES, VISION_PREFERENCES_KEY, normalizePreferences, effectiveLayout, featuredSlots, type VisionPreferences, type Wall } from "@/lib/vision-layout";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
 import {
@@ -21,6 +23,13 @@ import {
 function Icon({ name }: { name: "play" | "stop" | "sound" | "muted" | "close" | "menu" | "image" | "expand" | "pause" | "volume" }) {
   const paths = { pause: "M9 5v14m6-14v14", play: "m8 5 11 7-11 7Z", stop: "M6 6h12v12H6Z", sound: "m11 5-6 4H2v6h3l6 4ZM15 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14", muted: "m11 5-6 4H2v6h3l6 4ZM16 9l6 6m0-6-6 6", volume: "M4 10v4m4-7v10m4-13v16m4-13v10m4-7v4", close: "m6 6 12 12M6 18 18 6", menu: "M2 6h20M2 12h20M2 18h20", image: "M3 3h18v18H3ZM3 17l6-6 4 4 3-3 5 5M7 7h2", expand: "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" };
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>;
+}
+
+function PlayIcon() {
+  // The triangle is a transparent cutout, like the owner's circular reference.
+  return <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false" fill="currentColor">
+    <path fillRule="evenodd" d="M16 1a15 15 0 1 0 0 30a15 15 0 0 0 0-30ZM11 7l14 9-14 9Z" />
+  </svg>;
 }
 
 function useRecordingStatus(enabled: boolean) {
@@ -262,23 +271,23 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
       <video ref={video} className={`vision-picture ${active ? "" : "hidden"}`} muted autoPlay playsInline aria-label={`${camera.label} live video`} />
       {ring && !active && snapshot ? <img className="vision-picture" src={`data:image/jpeg;base64,${snapshot.image}`} alt={`${camera.label} snapshot, not live`} /> : null}
       {swannCanPlay ? <button className="vision-tile-open vision-tile-play" onClick={play} aria-label={`Play ${camera.label}`}>
-        <span className="vision-play vision-chrome"><Icon name="play" />Play</span>
+        <span className="vision-play vision-action"><PlayIcon /></span>
       </button> : !fullscreen ? <button className="vision-tile-open"
         disabled={state.status === "connecting"}
         onClick={() => ring && featured ? onFeature(camera.id) : openFullscreen()}
         onDoubleClick={ring && featured ? openFullscreen : undefined}
         aria-label={ring && featured ? `Feature ${camera.label}` : `Open ${camera.label} fullscreen`} /> : null}
-      {ring && featured && !fullscreen ? <button className="vision-expand vision-icon vision-badge" onClick={openFullscreen} aria-label={`Open ${camera.label} fullscreen`} title="Open fullscreen"><Icon name="expand" /></button> : null}
+      {ring && featured && !fullscreen ? <button className="vision-expand vision-icon vision-badge vision-action" onClick={openFullscreen} aria-label={`Open ${camera.label} fullscreen`} title="Open fullscreen"><Icon name="expand" /></button> : null}
       {ring && !fullscreen && !active && !snapshot ? <div className="vision-placeholder" role="status"><Icon name="image" /><span>{snapshotBusy ? "Loading snapshot…" : "Snapshot unavailable"}</span></div> : null}
       {state.status === "connecting" ? <div className="vision-placeholder" role="status"><span>Connecting…</span></div> : null}
       {!ring ? <span className="vision-recording" role="img" data-recording-state={recording} aria-label={RECORDING_LABELS[recording]} title={RECORDING_LABELS[recording]} /> : null}
       {ring && state.status === "playing" ? <span className="vision-ring-live vision-badge">LIVE</span> : null}
       <span className="vision-name vision-badge">{camera.label}{ring && snapshot?.eventAt ? <span className="vision-event-age" title="Time since last Ring event">{compactAge(snapshot.eventAt, now, true)}</span> : null}</span>
       {ring && !active ? <RingWallBadges snapshot={snapshot} now={now} /> : null}
-      {mainFeature && !fullscreen ? <button className="vision-rotation-state vision-icon vision-badge" onClick={onRotation} aria-pressed={paused} aria-label={`${paused ? "Resume" : "Pause"} camera rotation`}><Icon name={paused ? "play" : "pause"} /></button> : null}
+      {mainFeature && !fullscreen ? <button className="vision-rotation-state vision-icon vision-badge vision-action" onClick={onRotation} aria-pressed={paused} aria-label={`${paused ? "Resume" : "Pause"} camera rotation`}><Icon name={paused ? "play" : "pause"} /></button> : null}
       {fullscreen && active && remaining !== null ? <span className="vision-budget vision-badge" aria-label={`Viewing ends in ${Math.floor(remaining / 60)} minutes ${remaining % 60} seconds`}>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span> : null}
-      {!ring && active ? <button className="vision-icon vision-badge vision-stop" onClick={() => { player.current?.stop(); setVolumeOpen(false); }} aria-label={`Stop ${camera.label}`}><Icon name="stop" /></button> : null}
-      <div className="vision-tile-controls">
+      {!ring && active ? <button className="vision-icon vision-badge vision-stop vision-action" onClick={() => { player.current?.stop(); setVolumeOpen(false); }} aria-label={`Stop ${camera.label}`}><Icon name="stop" /></button> : null}
+      <div className="vision-tile-controls vision-action">
         {active ? <>
           <button className="vision-icon vision-badge" disabled={state.status !== "playing"} aria-pressed={!state.muted} aria-label={`${state.muted ? "Unmute" : "Mute"} ${camera.label}`} onClick={() => void fleet.sound(camera.id)}><Icon name={state.muted ? "muted" : "sound"} /></button>
           <button className="vision-icon vision-badge" disabled={state.status !== "playing"} aria-label={`Volume for ${camera.label}`} aria-expanded={volumeOpen} onClick={() => setVolumeOpen(value => !value)}><Icon name="volume" /></button>
@@ -291,8 +300,8 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
         </> : null}
       </div>
       {fullscreen ? <>
-        <button className="vision-close vision-icon vision-chrome" onClick={closeFullscreen} aria-label="Close fullscreen"><Icon name="close" /></button>
-        {ring && !active ? <div className="vision-play-area"><button className="vision-play vision-chrome" disabled={dataSaver} onClick={play}><Icon name="play" />Play</button><p>{dataSaver ? "Data Saver is on. Turn it off in the menu to play." : "Starts a Ring Live View · up to 5 minutes"}</p></div> : null}
+        <button className="vision-close vision-icon vision-chrome vision-action" onClick={closeFullscreen} aria-label="Close fullscreen"><Icon name="close" /></button>
+        {ring && !active ? <div className="vision-play-area vision-action"><button className="vision-play" aria-label="Play" aria-describedby={`vision-play-note-${camera.id}`} disabled={dataSaver} onClick={play}><PlayIcon /></button><p id={`vision-play-note-${camera.id}`}>{dataSaver ? "Data Saver is on. Turn it off in the menu to play." : "Starts a Ring Live View · up to 5 minutes"}</p></div> : null}
       </> : null}
       {(error && (!ring || fullscreen || snapshot)) || state.status === "error" ? <p className="vision-camera-error" role="alert">{error || state.message}{errorReference || state.reference ? <small> Reference: {errorReference || state.reference}</small> : null}</p> : null}
     </section>
@@ -300,6 +309,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
 }
 
 export function CameraViewer({ enabled }: { enabled: boolean }) {
+  const screen = useRef<HTMLElement>(null);
   const [fleet] = useState(() => new ViewerFleet());
   const mounted = useRef(false);
   const authGeneration = useRef(0);
@@ -337,6 +347,8 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   const selected = account?.cameras.find(camera => camera.id === featuredId) ?? account?.cameras[0];
   const selectedIndex = account?.cameras.findIndex(camera => camera.id === selected?.id) ?? 0;
   const slots = featuredSlots(account?.cameras ?? [], selected?.id ?? "", selectedIndex);
+  useViewerChrome(screen, !!account && !startup, menuOpen || settingsOpen || sessionsOpen || !!error, `${group}:${soloId ?? "wall"}`);
+  useViewerInsets(screen, !!account, `${group}:${layout}:${selected?.id}:${soloId}:${account?.cameras.length}`);
   const receiveSnapshot = useCallback((id: string, snapshot: ViewerSnapshot) => {
     setWallNow(Date.now());
     setSnapshots(value => ({...value, [id]: snapshot}));
@@ -562,7 +574,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   const ringIndex = account?.cameras.filter(camera => camera.kind === "ring").findIndex(camera => camera.id === selected?.id) ?? 0;
 
   return <>
-    <main className={account ? `vision-app vision-fit-${preferences.fit}` : "vision-login"} inert={startup ? true : undefined} data-vision-ui="dell-parity-1" aria-label="MPDEE Vision">
+    <main ref={screen} className={account ? `vision-app vision-fit-${preferences.fit}` : "vision-login"} inert={startup ? true : undefined} data-vision-ui="dell-parity-1" aria-label="MPDEE Vision">
       {!account ? <div className="vision-login-shell">
         <header className="vision-login-brand"><span className="vision-logo" aria-hidden="true">△</span><span>MPDEE <strong>VISION</strong></span></header>
         {!enabled ? <section className="vision-login-panel"><h1>Website viewing is unavailable</h1><p>Use private access to open your cameras.</p><Link href="/setup">Open private access setup</Link></section>
@@ -595,9 +607,9 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
             <span className="vision-name vision-badge">{selectedRing.label}{snapshots[selectedRing.id]?.eventAt ? <span className="vision-event-age">{compactAge(snapshots[selectedRing.id].eventAt!, wallNow, true)}</span> : null}</span>
           </div> : null}
         </div>
-        <button className="vision-burger vision-icon" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => { menu.current?.showModal(); setMenuOpen(true); }}><Icon name="menu" /></button>
-        <nav hidden={!!soloId} className="vision-wall-dots" aria-label="Camera walls">{WALL_ORDER.map(value => <button key={value} aria-label={value === "all" ? "All Cameras" : value === "swann" ? "Swann" : "Ring"} title={value === "all" ? "All Cameras" : value === "swann" ? "Swann Cameras" : "Ring Cameras"} aria-pressed={group === value} onClick={() => chooseWall(value)}><span /></button>)}</nav>
-        {!wallStarted && group !== "ring" && !soloId && account.cameras.some(camera => camera.kind === "swann") ? <button className="vision-start vision-start-floating" onClick={startWall} disabled={busy}><Icon name="play" />Start wall</button> : null}
+        <button className="vision-burger vision-icon vision-action" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => { menu.current?.showModal(); setMenuOpen(true); }}><Icon name="menu" /></button>
+        <nav hidden={!!soloId} className="vision-wall-dots vision-action" aria-label="Camera walls">{WALL_ORDER.map(value => <button key={value} aria-label={value === "all" ? "All Cameras" : value === "swann" ? "Swann" : "Ring"} title={value === "all" ? "All Cameras" : value === "swann" ? "Swann Cameras" : "Ring Cameras"} aria-pressed={group === value} onClick={() => chooseWall(value)}><span /></button>)}</nav>
+        {!wallStarted && group !== "ring" && !soloId && account.cameras.some(camera => camera.kind === "swann") ? <button className="vision-start vision-start-floating vision-action" onClick={startWall} disabled={busy}><Icon name="play" />Start wall</button> : null}
         {!account.cameras.length ? <p className="vision-empty">No cameras are assigned to this account. Ask the owner to update your access.</p> : null}
         <p className="vision-notice" role="status">{notice}</p>
         <dialog ref={menu} className="vision-menu vision-main-menu" aria-labelledby="vision-menu-title" onClose={() => setMenuOpen(false)}

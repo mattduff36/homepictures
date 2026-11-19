@@ -32,7 +32,7 @@ export function VisionSettings({ preferences, onChange, onClose, username, onSes
           <h3>MPDEE Vision</h3><p>The same camera walls, wherever you are.</p>
           <h4>Website viewing</h4><p>Swann streams in SD, with up to five cameras at once and a 15-minute viewing limit. Ring stays on snapshots until you open a camera and press Play, for up to five minutes.</p>
           <p>Leaving the page, locking your phone or going offline stops live viewing. Press Play or Start wall to resume. Sound comes from one camera at a time.</p>
-          <h4>On your phone</h4><p>Swipe between Swann, All Cameras and Ring. Tap a picture to open it. In Safari, use Share → Add to Home Screen for an app-like view.</p>
+          <h4>On your phone</h4><p>Swipe between Swann, All Cameras and Ring. Controls hide after three idle seconds: tap once to show them, then tap a picture to open it. In Safari, use Share → Add to Home Screen for an app-like view.</p>
           <Link href="/setup">Private access and recording playback</Link>
         </>}
       </div>
