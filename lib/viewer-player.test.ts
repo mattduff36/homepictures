@@ -289,7 +289,12 @@ test("watch component wires hidden/page-exit/unmount/logout cleanup and requests
   assert.match(component, /fleet\.stop\(/);
   assert.match(component, /player\.current\?\.stop\(\)/);
   assert.match(component, /muted autoPlay playsInline/);
-  assert.doesNotMatch(source + component, /getUserMedia|getDisplayMedia|new WebSocket|localStorage/);
+  assert.doesNotMatch(source + component, /getUserMedia|getDisplayMedia|new WebSocket/);
+  assert.doesNotMatch(source, /localStorage/);
+  // Only normalized non-secret display preferences may persist; auth and media stay in memory.
+  assert.match(component, /localStorage\.setItem\(VISION_PREFERENCES_KEY, JSON\.stringify\(clean\)\)/);
+  assert.match(component, /const clean = normalizePreferences\(next\)/);
+  assert.doesNotMatch(component, /(?:localStorage|sessionStorage)\.setItem\([^;]*(?:password|token|lease|snapshot|account)/i);
   assert.equal(shouldDisableStore("/watch"), true);
   assert.match(buildContentSecurityPolicy("nonce", false), /media-src 'self' blob:/);
 });

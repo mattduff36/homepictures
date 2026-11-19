@@ -44,7 +44,7 @@ export function SavedSessions({ onClose, onExpired }: { onClose: () => void; onE
     }
   }
 
-  return <dialog ref={dialog} className="vision-menu" aria-labelledby="saved-sign-ins-title" onClose={onClose}>
+  return <dialog ref={dialog} className="vision-settings vision-sessions" aria-labelledby="saved-sign-ins-title" onClose={onClose}>
     <div className="vision-menu-heading"><h2 id="saved-sign-ins-title">Saved sign-ins</h2><button className="vision-icon" aria-label="Close saved sign-ins" onClick={onClose}>×</button></div>
     <p className="vision-menu-account">Up to three saved sign-ins, each lasting seven days. Sign out an old session to make room for another device. This ends that session&apos;s live viewing.</p>
     {!sessions && !error ? <p role="status">Checking saved sign-ins…</p> : null}

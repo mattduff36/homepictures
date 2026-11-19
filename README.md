@@ -6,6 +6,39 @@ Tailscale or installation. Live media travels through WebRTC/TURN, not Vercel.
 Only small authenticated Ring stills pass through the portal. Existing private
 access still uses Tailscale; the setup password **never authorises viewing**.
 
+## Vision website presentation
+
+`/watch` uses the Dell MPDEE Vision artwork and startup animation, an edge-to-edge
+wall, square controls, the floating burger menu, and Swann / All / Ring wall
+navigation. Automatic layout uses Featured on wide desktop pointers and Grid on
+phones. Settings > Viewing can pin either layout, set rotation timing, and choose
+Fill or Fit. Select All Cameras again in the menu while Automatic is selected to
+temporarily switch Featured/Grid. Tap a Featured thumbnail to feature it, tap the
+large view to pause/resume rotation, and use Expand for fullscreen. Horizontal
+swipes change walls on touch screens.
+
+The startup layer respects reduced motion and cannot trap a failed connection;
+it supports Skip and a bounded fallback. Its video and still are copied unchanged
+from the Dell frontend. Player instances remain mounted across wall/layout
+changes; a repeated Ring thumbnail reuses its existing in-memory still. Layout
+preferences are the only viewer data kept in localStorage. Credentials, account
+data, media, TURN configuration and snapshots are never persisted there.
+
+Browser viewing still requires Start wall for Swann. Ring remains snapshot-only
+until fullscreen plus explicit Play, for at most five minutes. Opening Ring
+fullscreen stops the Swann wall; close it and press Start wall to resume. Settings
+contain only browser-supported controls; private appliance operations stay on the
+Dell. The existing receive-only WebRTC/TURN path, finite leases, per-account
+permissions, one-audio rule and saved-sign-in controls remain in effect.
+
+Website accounts are managed on the Dell under Settings > System > Website
+accounts. Its local-only controls create accounts, assign cameras, reset passwords,
+enable/disable access and revoke remembered sessions. Public website accounts
+have no administrative role. Account changes restart only the isolated website
+gateway, briefly stopping website streams; recording and private Dell playback
+continue. The companion Vision repository contains the installer and rollback
+procedure.
+
 ## Dell cutover
 
 The canonical camera app is **https://mpdee-vision.tail03543e.ts.net/**.
@@ -208,14 +241,15 @@ Audio counters alone do not prove audible sound.
 Nothing plays before an explicit Watch/wall action. Group navigation and single
 camera selection preserve one peer/camera; Swann wall uses up to five existing
 SD+audio streams with one sound source. Video starts muted/playsInline; Sound on
-is explicit. Fullscreen supports iPhone native video and standard Fullscreen.
-The manifest reuses the existing icon; Home Screen guidance is inside `/watch`.
+is explicit. Fullscreen uses the full browser viewport with a close control and keyboard
+focus handling. The manifest reuses the existing icon.
 
 All five Ring cameras default to Snapshot. Refresh is explicit, shared/cache
 limited to at most one bridge fetch/camera per60s; no background battery polling.
-Still age/stale/unknown metadata is shown honestly. Timed live lasts up to60s;
-Always is an explicit foreground session up to4min, then Continue is required.
-Data Saver forces Ring Snapshot. Private app preferences are never read/written.
+Still age/stale/unknown metadata is shown honestly. Ring live requires opening
+fullscreen and pressing Play, with an absolute five-minute maximum. Closing
+fullscreen, hiding the page, going offline or signing out stops live viewing.
+Data Saver disables Ring Play. Private app preferences are never read/written.
 
 Stop, hidden tab, page exit, offline/online transition, unmount and logout close
 all peers/tracks; restarting after network changes is explicit. Swann has an
