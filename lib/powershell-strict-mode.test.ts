@@ -21,7 +21,9 @@ test("the installer inspects DisplayName through PSObject.Properties", () => {
   );
 });
 
-test("uninstall-registry objects without DisplayName are skipped under StrictMode", () => {
+test("uninstall-registry objects without DisplayName are skipped under StrictMode", {
+  skip: process.platform !== "win32" ? "Windows PowerShell runtime check; covered by Windows release CI" : false,
+}, () => {
   const result = spawnSync(
     "powershell.exe",
     [

@@ -48,7 +48,9 @@ test("post-install UI launch is non-fatal and the success message still follows"
   assert.match(startClient, /catch \{/);
 });
 
-test("Start-TailscaleClient runtime behaviour holds under StrictMode", () => {
+test("Start-TailscaleClient runtime behaviour holds under StrictMode", {
+  skip: process.platform !== "win32" ? "Windows PowerShell runtime check; covered by Windows release CI" : false,
+}, () => {
   const result = spawnSync(
     "powershell.exe",
     [

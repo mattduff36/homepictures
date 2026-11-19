@@ -31,7 +31,9 @@ test("the dedicated HomePictures state path is MPDEE-HomePictures and the old MP
   assert.doesNotMatch(installer, /Join-Path \$env:ProgramData 'MPDEE'/);
 });
 
-test("PowerShell installer and restore scripts parse cleanly", () => {
+test("PowerShell installer and restore scripts parse cleanly", {
+  skip: process.platform !== "win32" ? "Windows PowerShell runtime check; covered by Windows release CI" : false,
+}, () => {
   const result = spawnSync(
     "powershell.exe",
     [
@@ -55,7 +57,9 @@ test("PowerShell installer and restore scripts parse cleanly", () => {
   assert.match(result.stdout, /POWERSHELL_PARSE_CHECKS_PASSED/);
 });
 
-test("state-directory ACL, rollback, and legacy-path isolation hold under StrictMode", () => {
+test("state-directory ACL, rollback, and legacy-path isolation hold under StrictMode", {
+  skip: process.platform !== "win32" ? "Windows PowerShell runtime check; covered by Windows release CI" : false,
+}, () => {
   const result = spawnSync(
     "powershell.exe",
     [
