@@ -272,6 +272,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
       {ring && !active ? <RingWallBadges snapshot={snapshot} now={now} /> : null}
       {mainFeature && !fullscreen ? <button className="vision-rotation-state vision-icon vision-badge" onClick={onRotation} aria-pressed={paused} aria-label={`${paused ? "Resume" : "Pause"} camera rotation`}><Icon name={paused ? "play" : "pause"} /></button> : null}
       {fullscreen && active && remaining !== null ? <span className="vision-budget vision-badge" aria-label={`Viewing ends in ${Math.floor(remaining / 60)} minutes ${remaining % 60} seconds`}>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span> : null}
+      {!ring && active ? <button className="vision-icon vision-badge vision-stop" onClick={() => { player.current?.stop(); setVolumeOpen(false); }} aria-label={`Stop ${camera.label}`}><Icon name="stop" /></button> : null}
       <div className="vision-tile-controls">
         {active ? <>
           <button className="vision-icon vision-badge" disabled={state.status !== "playing"} aria-pressed={!state.muted} aria-label={`${state.muted ? "Unmute" : "Mute"} ${camera.label}`} onClick={() => void fleet.sound(camera.id)}><Icon name={state.muted ? "muted" : "sound"} /></button>
@@ -281,7 +282,7 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
             if (video.current) video.current.volume = next;
             setVolume(next);
           }} /> : null}
-          <button className="vision-icon vision-badge vision-stop" onClick={() => { player.current?.stop(); setVolumeOpen(false); }} aria-label={`Stop ${camera.label}`}><Icon name="stop" /></button>
+          {ring ? <button className="vision-icon vision-badge vision-ring-stop" onClick={() => { player.current?.stop(); setVolumeOpen(false); }} aria-label={`Stop ${camera.label}`}><Icon name="stop" /></button> : null}
         </> : null}
       </div>
       {fullscreen ? <>
@@ -530,7 +531,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     return () => clearTimeout(launch);
   }, [launchPending, account, checking, preferencesReady, startWall]);
   function swipeStart(event: PointerEvent<HTMLDivElement>) {
-    if (event.pointerType === "mouse" || soloId || (event.target as HTMLElement).closest(".vision-tile-controls,.vision-expand")) return;
+    if (event.pointerType === "mouse" || soloId || (event.target as HTMLElement).closest(".vision-tile-controls,.vision-expand,.vision-stop")) return;
     pointerStart.current = {x:event.clientX, y:event.clientY};
   }
   function swipeEnd(event: PointerEvent<HTMLDivElement>) {

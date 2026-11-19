@@ -31,7 +31,8 @@
 .vision-budget { position:absolute; top:0; right:0; z-index:3; padding:4px 6px; font-size:10px; pointer-events:none; }
 .vision-tile-controls { position:absolute; left:0; bottom:0; z-index:4; display:flex; align-items:flex-end; gap:2px; }
 .vision-tile-controls .vision-icon { width:20px; height:20px; padding:0; }
-.vision-tile-controls .vision-stop { width:28px; height:28px; }
+.vision-stop { position:absolute; top:0; left:0; z-index:4; width:28px; height:28px; padding:0; }
+.vision-stop svg { width:12px; height:12px; }
 .vision-volume { position:absolute; left:0; bottom:100%; z-index:1; width:100px; padding:6px; border:1px solid; accent-color:white; }
 .vision-tile-controls .vision-icon svg { width:12px; height:12px; }
 .vision-age { position:absolute; bottom:0; left:0; z-index:3; height:20px; display:flex; align-items:center; gap:3px; padding:0 5px; font-size:9px; pointer-events:none; }
@@ -62,7 +63,9 @@
 .vision-solo .vision-budget { top:max(12px,env(safe-area-inset-top)); right:max(68px,env(safe-area-inset-right)); }
 .vision-solo .vision-tile-controls { left:max(12px,env(safe-area-inset-left)); bottom:max(16px,env(safe-area-inset-bottom)); }
 .vision-solo .vision-tile-controls .vision-icon { width:32px; height:32px; }
-.vision-solo .vision-tile-controls .vision-stop { width:36px; height:36px; }
+.vision-solo .vision-stop { top:max(12px,env(safe-area-inset-top)); left:max(12px,env(safe-area-inset-left)); width:36px; height:36px; }
+.vision-solo:has(.vision-stop) .vision-recording { left:max(56px,calc(env(safe-area-inset-left) + 44px)); }
+.vision-solo .vision-tile-controls .vision-ring-stop { width:36px; height:36px; }
 .vision-solo .vision-name { right:max(12px,env(safe-area-inset-right)); bottom:max(16px,env(safe-area-inset-bottom)); }
 .vision-close { position:absolute; top:max(12px,env(safe-area-inset-top)); right:max(12px,env(safe-area-inset-right)); z-index:8; }
 .vision-play-area { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; align-items:center; pointer-events:none; gap:12px; padding:60px 24px; text-align:center; }
@@ -175,7 +178,7 @@
 .vision-feature-held { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
 .vision-featured .vision-tile-open { cursor:pointer; }
 @media(orientation:portrait) { .vision-grid.vision-featured { grid-template-columns:minmax(0,1.4fr) repeat(4,minmax(0,1fr)); grid-template-rows:repeat(4,minmax(0,1fr)) minmax(0,1.3fr); } }
-@media(pointer:coarse) { .vision-tile-controls .vision-icon { width:44px; height:44px; }.vision-expand { opacity:1; width:44px; height:44px; }.vision-wall-dots { bottom:max(48px,calc(env(safe-area-inset-bottom) + 48px)); }.vision-wall-dots button { width:32px; height:32px; } }
+@media(pointer:coarse) { .vision-stop { width:44px; height:44px; }.vision-tile-controls .vision-icon { width:44px; height:44px; }.vision-expand { opacity:1; width:44px; height:44px; }.vision-wall-dots { bottom:max(48px,calc(env(safe-area-inset-bottom) + 48px)); }.vision-wall-dots button { width:32px; height:32px; } }
 @media(max-width:600px) {
   .vision-burger { top:max(16px,calc(env(safe-area-inset-top) + 12px)); right:max(16px,calc(env(safe-area-inset-right) + 12px)); }
   .vision-start-floating { top:max(16px,calc(env(safe-area-inset-top) + 12px)); right:max(72px,calc(env(safe-area-inset-right) + 68px)); }
