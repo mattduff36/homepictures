@@ -20,8 +20,8 @@ import {
   RECORDING_LABELS, validRecording, validSnapshot, type RecordingState, type ViewerCamera, type ViewerSnapshot,
 } from "@/lib/viewer-protocol";
 
-function Icon({ name }: { name: "play" | "stop" | "sound" | "muted" | "close" | "menu" | "image" | "expand" | "pause" | "volume" }) {
-  const paths = { pause: "M9 5v14m6-14v14", play: "m8 5 11 7-11 7Z", stop: "M6 6h12v12H6Z", sound: "m11 5-6 4H2v6h3l6 4ZM15 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14", muted: "m11 5-6 4H2v6h3l6 4ZM16 9l6 6m0-6-6 6", volume: "M4 10v4m4-7v10m4-13v16m4-13v10m4-7v4", close: "m6 6 12 12M6 18 18 6", menu: "M2 6h20M2 12h20M2 18h20", image: "M3 3h18v18H3ZM3 17l6-6 4 4 3-3 5 5M7 7h2", expand: "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" };
+function Icon({ name }: { name: "play" | "stop" | "sound" | "muted" | "close" | "menu" | "image" | "expand" | "pause" | "volume" | "reload" }) {
+  const paths = { reload: "M20 7v5h-5M20 12a8 8 0 1 0-2.34 5.66M20 12a8 8 0 0 0-2.34-5.66", pause: "M9 5v14m6-14v14", play: "m8 5 11 7-11 7Z", stop: "M6 6h12v12H6Z", sound: "m11 5-6 4H2v6h3l6 4ZM15 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14", muted: "m11 5-6 4H2v6h3l6 4ZM16 9l6 6m0-6-6 6", volume: "M4 10v4m4-7v10m4-13v16m4-13v10m4-7v4", close: "m6 6 12 12M6 18 18 6", menu: "M2 6h20M2 12h20M2 18h20", image: "M3 3h18v18H3ZM3 17l6-6 4 4 3-3 5 5M7 7h2", expand: "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" };
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>;
 }
 
@@ -336,7 +336,6 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   const [paused, setPaused] = useState(false);
   const [soloId, setSoloId] = useState<string | null>(null);
   const [pageVisible, setPageVisible] = useState(true);
-  const [wallStarted, setWallStarted] = useState(false);
   const [wallNow, setWallNow] = useState(0);
   const [snapshots, setSnapshots] = useState<Record<string, ViewerSnapshot>>({});
   const pointerStart = useRef<{x: number; y: number} | null>(null);
@@ -355,14 +354,13 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   }, []);
 
   const finishStartup = useCallback(() => setStartup(false), []);
-  const changeSolo = useCallback((id: string | null, kind?: ViewerCamera["kind"]) => {
+  const changeSolo = useCallback((id: string | null) => {
     setSoloId(id);
-    if (id && kind === "ring") setWallStarted(false);
   }, []);
   const clearSessionView = useCallback(() => {
     menu.current?.close();
     setMenuOpen(false); setSettingsOpen(false); setSessionsOpen(false);
-    setWallStarted(false); setSoloId(null); setSnapshots({});
+    setSoloId(null); setSnapshots({});
     setFeaturedId(""); setPaused(false); setGroup("all");
     setStartup(false); setLaunchPending(false);
   }, []);
@@ -417,7 +415,6 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
       fleet.stop(message);
       setEpoch((value) => value + 1);
       setNotice(message);
-      setWallStarted(false);
       setLaunchPending(false);
     };
     const visibility = () => { setPageVisible(!document.hidden); if (document.hidden) stop(); };
@@ -488,7 +485,6 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   async function logout() {
     const generation = ++authGeneration.current;
     fleet.stop();
-    setWallStarted(false);
     setLaunchPending(false);
     setEpoch((value) => value + 1);
     setBusy(true);
@@ -508,10 +504,20 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   }
 
   const closeMenu = useCallback(() => { menu.current?.close(); setMenuOpen(false); }, []);
+  function reloadApp() {
+    // Full document navigation, not a client-router refresh. A fresh URL bypasses
+    // a stale document; the returned release selects its content-hashed JS/CSS.
+    // Keep the saved sign-in, preferences and public offline fallback intact.
+    const url = new URL(window.location.href);
+    url.searchParams.set("_reload", Date.now().toString(36));
+    setBusy(true);
+    fleet.stop();
+    window.location.replace(url.href);
+  }
   function updatePreferences(next: VisionPreferences) {
     const clean = normalizePreferences(next);
     if (clean.layout !== preferences.layout) setLayoutOverride(null);
-    if (clean.dataSaver !== preferences.dataSaver) { fleet.stop(); setEpoch(value => value + 1); setWallStarted(false); }
+    if (clean.dataSaver !== preferences.dataSaver) { fleet.stop(); setEpoch(value => value + 1); }
     setPreferences(clean);
     try { localStorage.setItem(VISION_PREFERENCES_KEY, JSON.stringify(clean)); } catch { /* Session preferences still work. */ }
   }
@@ -520,7 +526,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
       setLayoutOverride(layout === "featured" ? "grid" : "featured");
     } else if (value !== group) {
       // All and Swann share their mounted players. Ring is snapshot-only on the wall.
-      if (value === "ring") { fleet.stop(); setWallStarted(false); }
+      if (value === "ring") fleet.stop();
       setGroup(value); setEpoch(current => current + 1);
     }
     closeMenu();
@@ -544,10 +550,10 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     if (!account || document.hidden || navigator.onLine === false) return;
     const cameras = account.cameras.filter(camera => camera.kind === "swann");
     if (!cameras.length) return;
-    setWallStarted(true); setNotice("Starting Swann cameras…"); closeMenu();
+    setNotice("Starting Swann cameras…"); closeMenu();
     void fleet.watch(cameras)
       .then(failed => setNotice(failed?.length ? `${failed.join(", ")} could not start. Use each camera's Retry button.` : "LIVE appears when moving video is confirmed."))
-      .catch(() => { setError("Could not start the wall. Please try again."); setWallStarted(false); });
+      .catch(() => { setError("Could not start the wall. Please try again."); });
   }, [account, fleet, closeMenu]);
   useEffect(() => {
     if (!launchPending || !account || checking || !preferencesReady) return;
@@ -609,7 +615,6 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
         </div>
         <button className="vision-burger vision-icon vision-action" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => { menu.current?.showModal(); setMenuOpen(true); }}><Icon name="menu" /></button>
         <nav hidden={!!soloId} className="vision-wall-dots vision-action" aria-label="Camera walls">{WALL_ORDER.map(value => <button key={value} aria-label={value === "all" ? "All Cameras" : value === "swann" ? "Swann" : "Ring"} title={value === "all" ? "All Cameras" : value === "swann" ? "Swann Cameras" : "Ring Cameras"} aria-pressed={group === value} onClick={() => chooseWall(value)}><span /></button>)}</nav>
-        {!wallStarted && group !== "ring" && !soloId && account.cameras.some(camera => camera.kind === "swann") ? <button className="vision-start vision-start-floating vision-action" onClick={startWall} disabled={busy}><Icon name="play" />Start wall</button> : null}
         {!account.cameras.length ? <p className="vision-empty">No cameras are assigned to this account. Ask the owner to update your access.</p> : null}
         <p className="vision-notice" role="status">{notice}</p>
         <dialog ref={menu} className="vision-menu vision-main-menu" aria-labelledby="vision-menu-title" onClose={() => setMenuOpen(false)}
@@ -619,12 +624,13 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
             title={value === "all" && group === "all" && preferences.layout === "auto" ? `Switch to ${layout === "featured" ? "Grid" : "Featured"}` : undefined}
             onClick={() => chooseWall(value, true)}><span className="vision-menu-selection" aria-hidden="true">{group === value ? "✓" : ""}</span>{value === "all" ? "All Cameras" : value === "swann" ? "Swann Cameras" : "Ring Cameras"}{value === "all" && group === "all" && preferences.layout === "auto" ? <span className="vision-layout-switch" aria-label={`Switch to ${layout === "featured" ? "Grid" : "Featured"}`}>⇄</span> : null}</button>)}</div>
           {group !== "ring" ? <button className="vision-menu-action" onClick={startWall} disabled={!account.cameras.some(camera => camera.kind === "swann")}><Icon name="play" />Start wall</button> : null}
-          <button className="vision-menu-action" onClick={() => { fleet.stop(); setEpoch(value => value + 1); setWallStarted(false); setNotice("Viewing stopped. Press Start wall when you're ready."); closeMenu(); }}><Icon name="stop" />Stop all cameras</button>
+          <button className="vision-menu-action" onClick={() => { fleet.stop(); setEpoch(value => value + 1); setNotice("Viewing stopped. Open the menu and press Start wall when you're ready."); closeMenu(); }}><Icon name="stop" />Stop all cameras</button>
           <div className="vision-menu-divider" />
           <button className="vision-menu-action" onClick={() => { closeMenu(); setSettingsOpen(true); }}>Settings</button>
           <button className="vision-menu-action" onClick={() => { closeMenu(); setSessionsOpen(true); }}>Manage saved sign-ins</button>
           <label className="vision-menu-toggle"><span>Data Saver</span><input type="checkbox" aria-label="Data Saver" checked={dataSaver} onChange={event => updatePreferences({...preferences, dataSaver:event.target.checked})} /></label>
           <div className="vision-menu-divider" />
+          <button className="vision-menu-action" disabled={busy} onClick={reloadApp}><Icon name="reload" />Reload App</button>
           <button className="vision-menu-action" disabled={busy} onClick={() => { closeMenu(); void logout(); }}>Sign out</button>
           <p className="vision-menu-account">{account.username}<span>△ Web</span></p>
         </dialog>

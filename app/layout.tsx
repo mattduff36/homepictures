@@ -14,7 +14,10 @@ const barlow = Barlow({
 export const metadata: Metadata = {
   title: "Home Camera Access",
   description: "Private authorised access only.",
-  appleWebApp: { capable: true, title: "MPDEE Vision", statusBarStyle: "black-translucent" },
+  // Let iOS size its native status bar. The legacy black-translucent mode can
+  // leave a status-bar-height strip below standalone pages (WebKit 313800).
+  // appleWebApp would reinsert a status-bar-style tag even when that field is omitted.
+  other: { "mobile-web-app-capable": "yes", "apple-mobile-web-app-capable": "yes", "apple-mobile-web-app-title": "MPDEE Vision" },
   robots: {
     index: false,
     follow: false,

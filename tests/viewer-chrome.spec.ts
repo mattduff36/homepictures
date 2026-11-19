@@ -1,5 +1,6 @@
 import {test, expect, type Locator, type Page} from '@playwright/test';
 import {VIEWER_CAMERAS} from '../lib/viewer-protocol';
+import {VISION_PREFERENCES_KEY} from '../lib/vision-layout';
 
 test.use({serviceWorkers:'block', reducedMotion:'reduce', hasTouch:true});
 const ring = VIEWER_CAMERAS.find(camera => camera.id === 'ring-front')!;
@@ -12,6 +13,16 @@ async function tap(page: Page, target: Locator) {
   await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height / 2);
 }
 
+async function finishStartup(page: Page) {
+  await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toBeVisible();
+  // Advance while React can still be scheduling the next startup phase.
+  await expect.poll(async () => {
+    await page.clock.runFor(1000);
+    return page.getByRole('status',{name:'Starting MPDEE Vision'}).count();
+  },{timeout:16000}).toBe(0);
+  await expect(page.getByRole('button',{name:'Open menu'})).toBeVisible();
+}
+
 async function viewer(page: Page, all = false) {
   const configs: Array<{camera:string; mode:string}> = [];
   await page.clock.install();
@@ -20,7 +31,7 @@ async function viewer(page: Page, all = false) {
     if (!window.RTCPeerConnection) Object.defineProperty(window,'RTCPeerConnection',{value:class {},configurable:true});
     if (!window.MediaStream) Object.defineProperty(window,'MediaStream',{value:class {},configurable:true});
   });
-  await page.route('**/watch?wallLayout=grid', async route => {
+  await page.route('**/watch?**', async route => {
     const response = await route.fetch();
     const headers = response.headers();
     headers['content-security-policy'] = (headers['content-security-policy'] || '').replace(/upgrade-insecure-requests;?/g,'');
@@ -36,14 +47,7 @@ async function viewer(page: Page, all = false) {
     return route.fulfill({json:{ok:true}});
   });
   await page.goto('/watch?wallLayout=grid');
-  await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toBeVisible();
-  // Advance the clock while React and the mocked session settle; do not stop
-  // advancing while the startup effect may still be scheduling its next phase.
-  await expect.poll(async () => {
-    await page.clock.runFor(1000);
-    return page.getByRole('status',{name:'Starting MPDEE Vision'}).count();
-  },{timeout:16000}).toBe(0);
-  await expect(page.getByRole('button',{name:'Open menu'})).toBeVisible();
+  await finishStartup(page);
   return configs;
 }
 
@@ -91,8 +95,11 @@ test('badge backgrounds disappear after ten seconds while white camera text stay
 
 test('keyboard focus and open menus stay usable while idle', async ({page}) => {
   await viewer(page);
-  await page.clock.fastForward(3100);
-  await expect(page.getByRole('button',{name:'Open menu'})).toBeHidden();
+  // Let the final startup effect schedule idle timers before testing keyboard wake.
+  await expect.poll(async () => {
+    await page.clock.runFor(1000);
+    return page.getByRole('button',{name:'Open menu'}).isVisible();
+  }).toBe(false);
   await page.keyboard.press('Tab');
   const burger = page.getByRole('button',{name:'Open menu'});
   await burger.focus();
@@ -110,6 +117,9 @@ test('keyboard focus and open menus stay usable while idle', async ({page}) => {
 test('wall and solo fill the viewport and only screen-edge controls receive safe-area insets', async ({page}) => {
   await page.setViewportSize({width:390,height:844});
   await viewer(page,true);
+  // Keep controls present while measuring geometry, including on slower live HTTPS.
+  await page.keyboard.press('Tab');
+  await page.getByRole('button',{name:'Open menu'}).focus();
   const screen = page.getByRole('main',{name:'MPDEE Vision'});
   async function insets(top: number, right: number, bottom: number, left: number) {
     await screen.evaluate((element, values) => {
@@ -144,8 +154,49 @@ test('wall and solo fill the viewport and only screen-edge controls receive safe
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
   const solo = page.getByRole('dialog',{name:'Front ring camera fullscreen'});
   await expect(solo).toBeVisible();
+  await page.keyboard.press('Tab');
+  await solo.getByRole('button',{name:'Close fullscreen'}).focus();
   await expect.poll(()=>solo.evaluate(element=>Math.round(element.getBoundingClientRect().height))).toBe(844);
   await expect.poll(async ()=>(await solo.getByRole('button',{name:'Close fullscreen'}).boundingBox())!.y).toBeGreaterThanOrEqual(71);
   const name = await solo.locator('.vision-name').boundingBox();
   expect(name!.y + name!.height).toBeLessThanOrEqual(844-34-16);
+});
+
+test('Start wall stays in the menu and Reload App fetches a new document without losing preferences or cookies', async ({page,context}) => {
+  const configs = await viewer(page,true);
+  await page.keyboard.press('Tab');
+  await page.getByRole('button',{name:'Open menu'}).focus();
+  await expect(page.locator('meta[name="apple-mobile-web-app-status-bar-style"]')).toHaveCount(0);
+  await expect(page.locator('meta[name="mobile-web-app-capable"]')).toHaveAttribute('content','yes');
+  await expect(page.locator('meta[name="apple-mobile-web-app-capable"]')).toHaveAttribute('content','yes');
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content','MPDEE Vision');
+  await expect(page.locator('meta[name="viewport"]')).toHaveAttribute('content',/viewport-fit=cover/);
+  await expect(page.getByRole('button',{name:'Start wall',exact:true})).toBeHidden();
+  await expect(page.getByRole('button',{name:'Start wall',exact:true,includeHidden:true})).toHaveCount(1);
+  await page.getByRole('button',{name:'Open menu'}).click();
+  const menu = page.getByRole('dialog',{name:'Vision menu'});
+  await expect(menu.getByRole('button',{name:'Start wall',exact:true})).toBeVisible();
+  await menu.getByRole('button',{name:'Stop all cameras'}).click();
+  await expect(page.getByRole('button',{name:'Start wall',exact:true})).toBeHidden();
+  await page.getByRole('button',{name:'Open menu'}).click();
+  await menu.getByRole('checkbox',{name:'Data Saver'}).check();
+  await context.addCookies([{name:'reload_cookie_fixture',value:'kept',url:new URL(page.url()).origin,httpOnly:true}]);
+  await page.evaluate(() => { Object.assign(window,{reloadDocumentProbe:'old document'}); });
+  const navigations: string[] = [];
+  page.on('request', request => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url());
+  });
+  await menu.getByRole('button',{name:'Reload App',exact:true}).click();
+  await page.waitForURL(url => url.searchParams.has('_reload'));
+  await finishStartup(page);
+  expect(navigations).toHaveLength(1);
+  expect(new URL(navigations[0]).pathname).toBe('/watch');
+  expect(new URL(page.url()).searchParams.get('wallLayout')).toBe('grid');
+  expect(new URL(page.url()).searchParams.get('_reload')).toBeTruthy();
+  expect(await page.evaluate(() => Object.hasOwn(window,'reloadDocumentProbe'))).toBe(false);
+  expect((await context.cookies()).find(cookie=>cookie.name==='reload_cookie_fixture')?.value).toBe('kept');
+  expect(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)!).dataSaver,VISION_PREFERENCES_KEY)).toBe(true);
+  await page.getByRole('button',{name:'Open menu'}).click();
+  await expect(menu.getByRole('checkbox',{name:'Data Saver'})).toBeChecked();
+  expect(configs.every(config=>config.mode==='live' && !config.camera.startsWith('ring-'))).toBe(true);
 });

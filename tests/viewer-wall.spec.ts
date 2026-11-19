@@ -15,6 +15,13 @@ test.beforeEach(async ({page}) => {
   });
 });
 
+async function openMenu(page: Page) {
+  // A slow browser step can outlast the three-second idle timer. Wake first,
+  // as a keyboard user would, before asking Playwright to click the menu.
+  await page.keyboard.press('Tab');
+  await page.getByRole('button',{name:'Open menu'}).click();
+}
+
 async function expectRows(page: Page, expected: number[]) {
   await expect.poll(() => page.locator('.vision-tile:visible').evaluateAll(tiles => {
     const counts = new Map<number, number>();
@@ -95,7 +102,7 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
     expect(feature?.x).toBeCloseTo(288,0); expect(feature?.width).toBeCloseTo(1152,0);
     await page.getByRole('button',{name:'Pause camera rotation'}).click();
     await expect(page.getByRole('button',{name:'Resume camera rotation'})).toHaveAttribute('aria-pressed','true');
-    await page.getByRole('button',{name:'Open menu'}).click();
+    await openMenu(page);
     await page.getByRole('dialog',{name:'Vision menu'}).getByRole('button',{name:/All Cameras/}).click();
     await expect(page.locator('.vision-grid')).toHaveAttribute('data-layout','grid');
     await expectRows(page,[3,3,4]);
@@ -133,7 +140,7 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
   expect(configs).toHaveLength(6);
   await page.getByRole('button',{name:'Close fullscreen'}).click();
-  await page.getByRole('button',{name:'Open menu'}).click();
+  await openMenu(page);
   await expect(page.getByRole('dialog',{name:'Vision menu'})).toBeVisible();
   await page.getByRole('button',{name:'Manage saved sign-ins'}).click();
   const saved = page.getByRole('dialog',{name:'Saved sign-ins',exact:true});
@@ -147,7 +154,7 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   expect(configs).toHaveLength(6);
   await page.keyboard.press('Escape');
   await expect(saved).toHaveCount(0);
-  await page.getByRole('button',{name:'Open menu'}).click();
+  await openMenu(page);
   await page.getByRole('checkbox',{name:/Data Saver/}).check();
   await page.getByRole('button',{name:'Close menu'}).click();
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
@@ -155,7 +162,9 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await page.getByRole('button',{name:'Swann',exact:true}).click();
   await expect(page.locator('.vision-tile:visible')).toHaveCount(5);
-  await page.getByRole('button',{name:'Start wall',exact:true}).filter({visible:true}).click();
+  await expect(page.getByRole('button',{name:'Start wall',exact:true})).toBeHidden();
+  await openMenu(page);
+  await page.getByRole('dialog',{name:'Vision menu'}).getByRole('button',{name:'Start wall',exact:true}).click();
   await expect.poll(()=>configs.length).toBe(11);
   expect(configs.slice(6,11).every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
   const shed = page.getByRole('region',{name:'Shed swann camera'});
@@ -170,9 +179,10 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await page.getByRole('button',{name:'All Cameras',exact:true}).click();
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
   await page.getByRole('button',{name:'Close fullscreen'}).click();
-  await expect(page.locator('.vision-start-floating')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Start wall',exact:true})).toBeHidden();
   expect(configs).toHaveLength(12);
-  await page.getByRole('button',{name:'Open menu'}).click();
+  await openMenu(page);
+  await expect(page.getByRole('dialog',{name:'Vision menu'}).getByRole('button',{name:'Start wall',exact:true})).toBeEnabled();
   await page.getByRole('button',{name:'Sign out',exact:true}).click();
   await page.getByLabel('Username',{exact:true}).fill('test');
   await page.getByLabel('Password',{exact:true}).fill('fixture-password');
@@ -199,7 +209,7 @@ test('settings and Featured reuse mounted players, respect preference and never 
   await expect.poll(()=>calls.filter(action=>action==='config').length).toBe(5);
   await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toHaveCount(0,{timeout:16000});
   const nodes=await page.locator('.vision-tile video').elementHandles();
-  await page.getByRole('button',{name:'Open menu'}).click();
+  await openMenu(page);
   await page.getByRole('button',{name:'Settings',exact:true}).click();
   const settings=page.getByRole('dialog',{name:'Settings',exact:true});
   await settings.getByLabel('Featured wall',{exact:false}).selectOption('featured');
@@ -216,7 +226,7 @@ test('settings and Featured reuse mounted players, respect preference and never 
   expect(calls.filter(action=>action==='config')).toHaveLength(5);
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   for(const node of nodes) expect(await node.evaluate(item=>item.isConnected)).toBe(true);
-  await page.getByRole('button',{name:'Open menu'}).click();
+  await openMenu(page);
   await page.getByRole('dialog',{name:'Vision menu'}).getByRole('button',{name:'All Cameras',exact:true}).click();
   await expect(page.locator('.vision-grid')).toHaveAttribute('data-layout','featured');
   await page.reload();
@@ -253,8 +263,9 @@ test('signed-out home opens sign-in and launches once after login', async ({page
   await expect(page.locator('.vision-start-floating')).toHaveCount(0);
   expect(configs.every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
   await page.evaluate(()=>{window.dispatchEvent(new Event('offline'));window.dispatchEvent(new Event('online'));});
-  await expect(page.locator('.vision-start-floating')).toBeVisible();
-  await page.getByRole('button',{name:'Open menu'}).click();
+  await expect(page.getByRole('button',{name:'Start wall',exact:true})).toBeHidden();
+  await openMenu(page);
+  await expect(page.getByRole('dialog',{name:'Vision menu'}).getByRole('button',{name:'Start wall',exact:true})).toBeEnabled();
   await page.getByRole('button',{name:'Close menu'}).click();
   expect(configs).toHaveLength(5);
 });
