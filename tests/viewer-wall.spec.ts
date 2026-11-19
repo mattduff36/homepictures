@@ -156,7 +156,7 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await expect(saved).toHaveCount(0);
   await openMenu(page);
   await page.getByRole('checkbox',{name:/Data Saver/}).check();
-  await page.getByRole('button',{name:'Close menu'}).click();
+  await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
   await expect(page.getByRole('button',{name:'Play',exact:true})).toBeDisabled();
   await page.getByRole('button',{name:'Close fullscreen'}).click();
@@ -266,6 +266,6 @@ test('signed-out home opens sign-in and launches once after login', async ({page
   await expect(page.getByRole('button',{name:'Start wall',exact:true})).toBeHidden();
   await openMenu(page);
   await expect(page.getByRole('dialog',{name:'Vision menu'}).getByRole('button',{name:'Start wall',exact:true})).toBeEnabled();
-  await page.getByRole('button',{name:'Close menu'}).click();
+  await page.keyboard.press('Escape');
   expect(configs).toHaveLength(5);
 });

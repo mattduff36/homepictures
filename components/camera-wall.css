@@ -91,9 +91,6 @@ body:has(.vision-app) { min-height:0; height:100%; }
 .vision-menu::backdrop { background:#0003; }
 .vision-menu-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .vision-menu-heading h2 { font-size:19px; font-weight:600; }
-.vision-main-menu .vision-menu-heading { padding:2px 6px 6px 10px; }
-.vision-main-menu .vision-menu-heading h2 { font-size:13px; color:#89939e; font-weight:500; }
-.vision-main-menu .vision-menu-heading .vision-icon { border:0; width:36px; height:36px; background:transparent; }
 .vision-menu-action { width:100%; min-height:44px; display:flex; align-items:center; gap:10px; padding:10px 12px; border:0; background:transparent; color:#f3f5f7; text-align:left; font-size:13px; font-weight:600; }
 .vision-menu-action:hover,.vision-menu-action:focus-visible { background:#ffffff16; }
 .vision-menu-action[aria-current="page"] { background:#ffffff0d; color:#fff; }

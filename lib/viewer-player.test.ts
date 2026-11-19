@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, test } from "node:test";
+import { afterEach, test, type TestContext } from "node:test";
 import {
   fullscreenVideo, summarizeStats, viewerApi, ViewerApiError, ViewerFleet, ViewerPlayer, waitForGathering,
   type PlayerState, type VideoSink, type ViewerPeer,
@@ -64,8 +64,9 @@ function fixture(apiOverride?: (action: string, body: Record<string, unknown>) =
   let paused = false;
   let trackStopped = false;
   let expired = false;
+  let playCalls = 0;
   const video: VideoSink = { srcObject: null, muted: false, readyState: 4,
-    async play() {}, pause() { paused = true; } };
+    async play() { ++playCalls; }, pause() { paused = true; } };
   const stream = {
     addTrack(_track: MediaStreamTrack) { void _track; },
     getTracks: () => [{ stop() { trackStopped = true; } } as MediaStreamTrack],
@@ -86,7 +87,7 @@ function fixture(apiOverride?: (action: string, body: Record<string, unknown>) =
   });
   players.push(player);
   return { player, get peer() { return peer; }, states, calls, video, get options() { return options; },
-    get expired() { return expired; }, get paused() { return paused; }, get trackStopped() { return trackStopped; } };
+    get expired() { return expired; }, get paused() { return paused; }, get trackStopped() { return trackStopped; }, get playCalls() { return playCalls; } };
 }
 async function pause(ms = 15) { await new Promise((resolve) => setTimeout(resolve, ms)); }
 
@@ -602,4 +603,193 @@ test("a late transient setup-poll failure cannot close established video with va
   assert.equal(f.player.status, "playing");
   assert.equal(polls, 2);
   assert.equal(f.calls.filter(call => call.action === "config").length, 1);
+});
+
+const GRACE_TEST_TIMING = {statsMs:1000, startupMs:60000, playbackMs:60000,
+  gatheringMs:20, sessionMs:30000, signallingMs:30000};
+function graceClock(context: TestContext) {
+  context.mock.timers.enable({apis:["Date", "setTimeout", "setInterval"], now:1_800_000_000_000});
+  const fleet = new ViewerFleet();
+  context.after(() => fleet.stop());
+  return {fleet, async tick(ms: number) { context.mock.timers.tick(ms); await Promise.resolve(); }};
+}
+
+test("Ring wall grace keeps the same muted Swann peer through 20 seconds without decoded frames", async context => {
+  const {fleet, tick} = graceClock(context);
+  const f = fixture(undefined, GRACE_TEST_TIMING);
+  fleet.register("back-garden", f.player);
+  await fleet.watch([VIEWER_CAMERAS[0]]);
+  f.peer.frames = 2; await tick(1000);
+  f.peer.frames = 4; await tick(1000);
+  assert.equal(f.player.status, "playing");
+  await fleet.sound("back-garden");
+  assert.equal(f.video.muted, false);
+  const peer = f.peer, stream = f.video.srcObject, plays = f.playCalls;
+  fleet.enterRingWall();
+  assert.equal(f.video.muted, true);
+  await tick(20000);
+  assert.equal(f.player.status, "playing");
+  assert.equal(peer.closed, false);
+  fleet.leaveRingWall();
+  await f.player.resumeFromRingWall();
+  await tick(1000); // The former expiry is now past; no new decoded frame yet.
+  assert.equal(f.player.status, "playing");
+  assert.equal(f.peer, peer);
+  assert.equal(f.video.srcObject, stream);
+  assert.equal(f.playCalls, plays + 1);
+  assert.equal(f.calls.filter(call => call.action === "config").length, 1);
+  assert.equal(f.calls.filter(call => call.action === "offer").length, 1);
+  assert.equal(f.calls.filter(call => call.action === "stop").length, 0);
+});
+
+test("Ring wall grace releases Swann after 20 seconds and returning never starts it again", async context => {
+  const {fleet, tick} = graceClock(context);
+  const f = fixture(undefined, GRACE_TEST_TIMING);
+  fleet.register("back-garden", f.player);
+  await fleet.watch([VIEWER_CAMERAS[0]]);
+  fleet.enterRingWall();
+  await tick(20000);
+  assert.equal(f.peer.closed, false);
+  await tick(1);
+  await f.player.waitForRelease();
+  assert.equal(f.peer.closed, true);
+  assert.equal(f.video.srcObject, null);
+  assert.equal(f.trackStopped, true);
+  assert.equal(f.calls.filter(call => call.action === "stop").length, 1);
+  fleet.leaveRingWall();
+  await f.player.resumeFromRingWall();
+  assert.equal(f.player.status, "stopped");
+  assert.equal(f.calls.filter(call => call.action === "config").length, 1);
+  assert.equal(f.calls.filter(call => call.action === "stop").length, 1);
+});
+
+test("Ring wall return respects its deadline even before a delayed timer callback runs", async context => {
+  const {fleet} = graceClock(context);
+  const f = fixture(undefined, GRACE_TEST_TIMING);
+  fleet.register("back-garden", f.player);
+  await fleet.watch([VIEWER_CAMERAS[0]]);
+  fleet.enterRingWall();
+  const late = Date.now() + 20001;
+  const date = context.mock.method(Date, "now", () => late);
+  assert.equal(f.peer.closed, false);
+  fleet.leaveRingWall();
+  date.mock.restore();
+  assert.equal(f.peer.closed, true);
+  await f.player.resumeFromRingWall();
+  assert.equal(f.calls.filter(call => call.action === "config").length, 1);
+});
+
+test("Ring wall entry cancels a queued Swann start waiting for another lease to close", async context => {
+  const {fleet} = graceClock(context);
+  const release = deferred<unknown>();
+  const a = fixture(async action => {
+    if (action === "config") return {lease, camera:VIEWER_CAMERA, expires:Date.now()/1000+900, iceServers:[]};
+    if (action === "offer") return {type:"answer", sdp};
+    if (action === "poll") return {events:[], closed:false};
+    return release.promise;
+  }, GRACE_TEST_TIMING);
+  const b = fixture(undefined, GRACE_TEST_TIMING);
+  fleet.register("back-garden", a.player); fleet.register("front-door", b.player);
+  await fleet.watch([VIEWER_CAMERAS[0]]);
+  const pending = fleet.watch([VIEWER_CAMERAS[1]]);
+  await Promise.resolve();
+  fleet.enterRingWall();
+  release.resolve({ok:true});
+  await pending;
+  assert.equal(b.calls.length, 0);
+});
+
+test("manual Stop and Ring fullscreen cancel grace so stale expiry cannot stop a newer session", async context => {
+  const {fleet, tick} = graceClock(context);
+  const swann = fixture(undefined, GRACE_TEST_TIMING), ring = fixture(undefined, GRACE_TEST_TIMING);
+  fleet.register("back-garden", swann.player); fleet.register("ring-front", ring.player);
+  await fleet.watch([VIEWER_CAMERAS[0]]);
+  fleet.enterRingWall();
+  fleet.stop("Page hidden or manual Stop");
+  await fleet.watch([VIEWER_CAMERAS[0]]);
+  const replacement = swann.peer;
+  await tick(20001);
+  assert.equal(replacement.closed, false);
+  fleet.enterRingWall();
+  fleet.enterRingFullscreen("ring-front");
+  assert.equal(replacement.closed, true);
+  assert.equal(ring.calls.length, 0);
+  const camera = VIEWER_CAMERAS.find(camera => camera.id === "ring-front")!;
+  await fleet.playRingFullscreen(camera);
+  await tick(20001);
+  assert.equal(ring.peer.closed, false);
+  assert.equal(ring.calls.filter(call => call.action === "config").length, 1);
+});
+
+test("grace expiry invalidates pending config and preserves earlier playback limits", async context => {
+  const {fleet, tick} = graceClock(context);
+  const config = deferred<unknown>(), requested = deferred<void>();
+  const pending = fixture(async action => {
+    if (action === "config") { requested.resolve(); return config.promise; }
+    return {ok:true};
+  }, GRACE_TEST_TIMING);
+  fleet.register("back-garden", pending.player);
+  const start = fleet.watch([VIEWER_CAMERAS[0]]);
+  await requested.promise;
+  fleet.enterRingWall();
+  await tick(20001);
+  config.resolve({lease, camera:VIEWER_CAMERA, expires:Date.now()/1000+900, iceServers:[]});
+  await start;
+  assert.equal(pending.options, undefined);
+  assert.equal(pending.calls.filter(call => call.action === "offer").length, 0);
+  assert.equal(pending.calls.filter(call => call.action === "stop").length, 1);
+  const limited = fixture(undefined, {...GRACE_TEST_TIMING, playbackMs:5000});
+  fleet.register("front-door", limited.player);
+  await fleet.watch([VIEWER_CAMERAS[1]]);
+  fleet.enterRingWall();
+  await tick(5001);
+  assert.equal(limited.peer.closed, true);
+  assert.equal(limited.player.status, "stopped");
+});
+
+test("returning from Ring while config is pending does not play an empty video or cancel its connection", async context => {
+  const {fleet} = graceClock(context);
+  const config = deferred<unknown>(), requested = deferred<void>();
+  const f = fixture(async action => {
+    if (action === "config") { requested.resolve(); return config.promise; }
+    if (action === "offer") return {type:"answer",sdp};
+    if (action === "poll") return {events:[],closed:false};
+    return {ok:true};
+  }, GRACE_TEST_TIMING);
+  fleet.register("back-garden", f.player);
+  const start = fleet.watch([VIEWER_CAMERAS[0]]);
+  await requested.promise;
+  fleet.enterRingWall(); fleet.leaveRingWall();
+  await f.player.resumeFromRingWall();
+  assert.equal(f.playCalls, 0);
+  config.resolve({lease, camera:VIEWER_CAMERA, expires:Date.now()/1000+900, iceServers:[]});
+  await start;
+  assert.equal(f.peer.closed, false);
+  assert.equal(f.player.active, true);
+  assert.equal(f.calls.filter(call => call.action === "config").length, 1);
+  assert.equal(f.calls.filter(call => call.action === "stop").length, 0);
+});
+
+test("a rejected older resume cannot stop the same peer after another Ring round trip", async context => {
+  const {fleet} = graceClock(context);
+  const f = fixture(undefined, GRACE_TEST_TIMING);
+  fleet.register("back-garden", f.player);
+  await fleet.watch([VIEWER_CAMERAS[0]]);
+  const olderPlay = deferred<void>();
+  let calls = 0;
+  f.video.play = () => ++calls === 1 ? olderPlay.promise : Promise.resolve();
+  fleet.enterRingWall(); fleet.leaveRingWall();
+  const olderResume = f.player.resumeFromRingWall();
+  fleet.enterRingWall(); fleet.leaveRingWall();
+  await f.player.resumeFromRingWall();
+  olderPlay.reject(new Error("Superseded media play"));
+  await olderResume;
+  assert.equal(f.peer.closed, false);
+  assert.equal(f.calls.filter(call => call.action === "stop").length, 0);
+  f.video.play = async () => { throw new Error("Current resume failed"); };
+  fleet.enterRingWall(); fleet.leaveRingWall();
+  await f.player.resumeFromRingWall();
+  assert.equal(f.peer.closed, true);
+  assert.equal(f.player.status, "error");
+  assert.equal(f.calls.filter(call => call.action === "stop").length, 1);
 });

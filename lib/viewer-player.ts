@@ -195,6 +195,8 @@ export class ViewerPlayer {
   private camera: CameraId = VIEWER_CAMERA;
   private previousFrames = 0;
   private lastFrameAt = 0;
+  private ringWallHeld = false;
+  private ringHoldRevision = 0;
   private releasePending: Promise<void> = Promise.resolve();
   private state: PlayerState = INITIAL_PLAYER_STATE;
 
@@ -207,6 +209,8 @@ export class ViewerPlayer {
 
   stop(message = "Stopped. Press Play to start again.", status: PlayerStatus = "stopped", report = true) {
     ++this.generation;
+    this.ringWallHeld = false;
+    ++this.ringHoldRevision;
     this.abort?.abort();
     this.abort = null;
     clearInterval(this.statsTimer);
@@ -260,6 +264,39 @@ export class ViewerPlayer {
     const video = this.deps.video();
     if (video) video.muted = true;
     this.publish({ muted: true });
+  }
+
+  holdForRingWall() {
+    if (!this.active) return;
+    ++this.ringHoldRevision;
+    this.ringWallHeld = true;
+    this.mute();
+  }
+
+  stopAfterRingGrace() {
+    if (this.ringWallHeld && this.active) {
+      this.stop("Swann viewing paused after 20 seconds on the Ring wall. Use Start wall to resume.");
+    }
+  }
+
+  async resumeFromRingWall() {
+    if (!this.ringWallHeld) return;
+    const revision = ++this.ringHoldRevision;
+    this.ringWallHeld = false;
+    if (!this.active) return;
+    const generation = this.generation;
+    // Hidden video may stop decoding. Give the same peer a fresh stall window
+    // and resume its muted media element after the tile becomes visible.
+    this.lastFrameAt = Date.now();
+    const video = this.deps.video();
+    // A pending lease has no media yet; its normal track handler starts it later.
+    if (!video?.srcObject) return;
+    try { await video.play(); }
+    catch {
+      if (generation === this.generation && revision === this.ringHoldRevision && !this.ringWallHeld) {
+        this.stop("Playback could not resume. Please retry.", "error");
+      }
+    }
   }
 
   async start(camera: CameraId = VIEWER_CAMERA, mode: LiveMode = "live", label = "Back Garden") {
@@ -333,8 +370,9 @@ export class ViewerPlayer {
           return;
         }
         stream.addTrack(event.track);
+        const revision = this.ringHoldRevision;
         void video.play().catch(() => {
-          if (current()) this.stop("Playback could not start. Please retry.", "error");
+          if (current() && revision === this.ringHoldRevision && !this.ringWallHeld) this.stop("Playback could not start. Please retry.", "error");
         });
       });
       peer.addEventListener("connectionstatechange", () => {
@@ -455,7 +493,7 @@ export class ViewerPlayer {
         // Remote candidates are needed during setup. A healthy selected relay needs only heartbeats.
         clearInterval(this.signallingTimer);
         this.publish({ status: "playing", message: `LIVE - ${this.label}` });
-      } else if (this.state.status === "playing" && Date.now() - this.lastFrameAt > 8000) {
+      } else if (!this.ringWallHeld && this.state.status === "playing" && Date.now() - this.lastFrameAt > 8000) {
         this.stop("The picture stopped updating. Please retry.", "error");
       }
     } catch {
@@ -468,7 +506,7 @@ export class ViewerPlayer {
   async toggleSound() {
     const generation = this.generation;
     const video = this.deps.video();
-    if (!video || this.state.status !== "playing") return;
+    if (!video || this.state.status !== "playing" || this.ringWallHeld) return;
     video.muted = !video.muted;
     this.publish({ muted: video.muted });
     try {
@@ -487,24 +525,70 @@ export function validSession(value: unknown): value is { username: string; camer
     typeof value.expires === "number" && value.expires > Date.now() / 1000;
 }
 
+const RING_WALL_GRACE_MS = 20_000;
+type RingWallGrace = { until: number; players: Map<CameraId, ViewerPlayer>; timer?: ReturnType<typeof setTimeout> };
+
 export class ViewerFleet {
   private players = new Map<CameraId, ViewerPlayer>();
   private generation = 0;
   private fullscreenRing: CameraId | null = null;
+  private ringWallGrace: RingWallGrace | null = null;
   register(camera: CameraId, player: ViewerPlayer) {
     this.players.get(camera)?.stop();
     this.players.set(camera, player);
     return () => {
       player.stop();
       if (this.players.get(camera) === player) this.players.delete(camera);
+      if (this.ringWallGrace?.players.get(camera) === player) this.ringWallGrace.players.delete(camera);
     };
   }
+  private clearRingWallGrace() {
+    const grace = this.ringWallGrace;
+    this.ringWallGrace = null;
+    if (grace) clearTimeout(grace.timer);
+    return grace;
+  }
+  private stopHeldSwann(grace: RingWallGrace) {
+    for (const [id, player] of grace.players) {
+      if (this.players.get(id) === player) {
+        player.stopAfterRingGrace();
+      }
+    }
+  }
+  enterRingWall() {
+    if (this.ringWallGrace) return;
+    // Cancel a queued wall start even when it has not allocated any peers yet.
+    ++this.generation;
+    this.fullscreenRing = null;
+    const players = new Map<CameraId, ViewerPlayer>();
+    for (const [id, player] of this.players) {
+      if (id.startsWith("ring-")) player.stop();
+      else if (player.active) { player.holdForRingWall(); players.set(id, player); }
+    }
+    if (!players.size) return;
+    const grace: RingWallGrace = {until: Date.now() + RING_WALL_GRACE_MS, players};
+    this.ringWallGrace = grace;
+    // A return at exactly 20 seconds is still within the owner's grace period.
+    grace.timer = setTimeout(() => {
+      if (this.ringWallGrace !== grace) return;
+      this.clearRingWallGrace();
+      this.stopHeldSwann(grace);
+    }, RING_WALL_GRACE_MS + 1);
+  }
+  leaveRingWall() {
+    const grace = this.clearRingWallGrace();
+    // Check the deadline as well as the timer: the event loop may have been busy.
+    if (grace && Date.now() > grace.until) this.stopHeldSwann(grace);
+    // Visible tiles resume retained media after React updates their hidden state.
+  }
   stop(message?: string) {
+    this.clearRingWallGrace();
     ++this.generation;
     this.fullscreenRing = null;
     for (const player of this.players.values()) player.stop(message);
   }
   retain(camera: CameraId) {
+    this.leaveRingWall();
     ++this.generation;
     if (this.fullscreenRing !== camera) this.fullscreenRing = null;
     for (const [id, player] of this.players) if (id !== camera) player.stop();
@@ -542,6 +626,7 @@ export class ViewerFleet {
         (cameras.some((c) => c.kind === "ring") && cameras.length !== 1)) {
       throw new ViewerPlaybackError("Choose one camera or the Swann wall.");
     }
+    this.leaveRingWall();
     const generation = ++this.generation;
     const wanted = new Set(cameras.map((c) => c.id));
     for (const [id, player] of this.players) if (!wanted.has(id)) player.stop();

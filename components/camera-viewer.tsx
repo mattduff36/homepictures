@@ -168,6 +168,10 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
   }, [camera.id, fleet, expired, cancelSnapshot]);
 
   useEffect(() => {
+    if (visible && !ring) void player.current?.resumeFromRingWall();
+  }, [visible, ring]);
+
+  useEffect(() => {
     cancelSnapshot();
   }, [epoch, cancelSnapshot]);
 
@@ -526,7 +530,8 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
       setLayoutOverride(layout === "featured" ? "grid" : "featured");
     } else if (value !== group) {
       // All and Swann share their mounted players. Ring is snapshot-only on the wall.
-      if (value === "ring") fleet.stop();
+      if (value === "ring") fleet.enterRingWall();
+      else fleet.leaveRingWall();
       setGroup(value); setEpoch(current => current + 1);
     }
     closeMenu();
@@ -547,14 +552,14 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     return () => document.removeEventListener("keydown", navigate);
   }, [account, startup, soloId, menuOpen, settingsOpen, sessionsOpen, group, chooseWall]);
   const startWall = useCallback(() => {
-    if (!account || document.hidden || navigator.onLine === false) return;
+    if (!account || group === "ring" || document.hidden || navigator.onLine === false) return;
     const cameras = account.cameras.filter(camera => camera.kind === "swann");
     if (!cameras.length) return;
     setNotice("Starting Swann cameras…"); closeMenu();
     void fleet.watch(cameras)
       .then(failed => setNotice(failed?.length ? `${failed.join(", ")} could not start. Use each camera's Retry button.` : "LIVE appears when moving video is confirmed."))
       .catch(() => { setError("Could not start the wall. Please try again."); });
-  }, [account, fleet, closeMenu]);
+  }, [account, fleet, closeMenu, group]);
   useEffect(() => {
     if (!launchPending || !account || checking || !preferencesReady) return;
     // Launch once after authentication, after the tiles have registered players.
@@ -617,9 +622,8 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
         <nav hidden={!!soloId} className="vision-wall-dots vision-action" aria-label="Camera walls">{WALL_ORDER.map(value => <button key={value} aria-label={value === "all" ? "All Cameras" : value === "swann" ? "Swann" : "Ring"} title={value === "all" ? "All Cameras" : value === "swann" ? "Swann Cameras" : "Ring Cameras"} aria-pressed={group === value} onClick={() => chooseWall(value)}><span /></button>)}</nav>
         {!account.cameras.length ? <p className="vision-empty">No cameras are assigned to this account. Ask the owner to update your access.</p> : null}
         <p className="vision-notice" role="status">{notice}</p>
-        <dialog ref={menu} className="vision-menu vision-main-menu" aria-labelledby="vision-menu-title" onClose={() => setMenuOpen(false)}
+        <dialog ref={menu} className="vision-menu vision-main-menu" aria-label="Vision menu" onClose={() => setMenuOpen(false)}
           onClick={event => { if (event.target === event.currentTarget) { const box = event.currentTarget.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) closeMenu(); } }}>
-          <div className="vision-menu-heading"><h2 id="vision-menu-title">Vision menu</h2><button className="vision-icon" aria-label="Close menu" onClick={closeMenu}><Icon name="close" /></button></div>
           <div className="vision-menu-walls">{WALL_ORDER.map(value => <button key={value} className="vision-menu-action" aria-current={group === value ? "page" : undefined}
             title={value === "all" && group === "all" && preferences.layout === "auto" ? `Switch to ${layout === "featured" ? "Grid" : "Featured"}` : undefined}
             onClick={() => chooseWall(value, true)}><span className="vision-menu-selection" aria-hidden="true">{group === value ? "✓" : ""}</span>{value === "all" ? "All Cameras" : value === "swann" ? "Swann Cameras" : "Ring Cameras"}{value === "all" && group === "all" && preferences.layout === "auto" ? <span className="vision-layout-switch" aria-label={`Switch to ${layout === "featured" ? "Grid" : "Featured"}`}>⇄</span> : null}</button>)}</div>
