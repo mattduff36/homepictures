@@ -23,7 +23,7 @@ async function finishStartup(page: Page) {
   await expect(page.getByRole('button',{name:'Open menu'})).toBeVisible();
 }
 
-async function viewer(page: Page, all = false, liveFixture = false) {
+async function viewer(page: Page, all = false, liveFixture = false, checkStartup?: () => Promise<void>) {
   const configs: Array<{camera:string; mode:string}> = [];
   await page.clock.install();
   await page.addInitScript(() => {
@@ -54,6 +54,7 @@ async function viewer(page: Page, all = false, liveFixture = false) {
     return route.fulfill({json:{ok:true}});
   });
   await page.goto('/watch?wallLayout=grid');
+  await checkStartup?.();
   await finishStartup(page);
   return configs;
 }
@@ -134,10 +135,6 @@ test('keyboard focus and open menus stay usable while idle', async ({page}) => {
 
 test('wall and solo fill the viewport and only screen-edge controls receive safe-area insets', async ({page}) => {
   await page.setViewportSize({width:390,height:844});
-  await viewer(page,true);
-  // Keep controls present while measuring geometry, including on slower live HTTPS.
-  await page.keyboard.press('Tab');
-  await page.getByRole('button',{name:'Open menu'}).focus();
   const screen = page.getByRole('main',{name:'MPDEE Vision'});
   async function insets(top: number, right: number, bottom: number, left: number) {
     await screen.evaluate((element, values) => {
@@ -145,11 +142,25 @@ test('wall and solo fill the viewport and only screen-edge controls receive safe
     },{top,right,bottom,left});
   }
   async function fillsViewport() {
+    // A full-height wall inside a shorter html/body can still leave a black strip.
+    await expect.poll(()=>page.evaluate(()=>[document.documentElement,document.body].map(element=>{
+      const box = element.getBoundingClientRect();
+      return {x:box.x,y:box.y,width:Math.round(box.width),height:Math.round(box.height)};
+    }))).toEqual([0,1].map(()=>({x:0,y:0,...page.viewportSize()!})));
     await expect.poll(()=>screen.evaluate(element => {
       const rect = element.getBoundingClientRect();
       return {x:rect.x,y:rect.y,width:Math.round(rect.width),height:Math.round(rect.height),viewportWidth:innerWidth,viewportHeight:innerHeight};
     })).toEqual({x:0,y:0,width:page.viewportSize()!.width,height:page.viewportSize()!.height,viewportWidth:page.viewportSize()!.width,viewportHeight:page.viewportSize()!.height});
   }
+  await viewer(page,true,false,async () => {
+    const startup = page.getByRole('status',{name:'Starting MPDEE Vision'});
+    await expect(startup).toBeVisible();
+    await fillsViewport();
+    expect(await startup.boundingBox()).toEqual({x:0,y:0,width:390,height:844});
+  });
+  // Keep controls present while measuring geometry, including on slower live HTTPS.
+  await page.keyboard.press('Tab');
+  await page.getByRole('button',{name:'Open menu'}).focus();
   await insets(59,0,34,0);
   await fillsViewport();
   expect((await page.getByRole('button',{name:'Open menu'}).boundingBox())!.y).toBeGreaterThanOrEqual(71);
@@ -159,6 +170,15 @@ test('wall and solo fill the viewport and only screen-edge controls receive safe
   }));
   expect(recordings.some(row=>row.top === 0)).toBe(true);
   for (const row of recordings) expect(row.dotTop).toBeCloseTo(row.top + 7 + Math.max(0,59-row.top),0);
+  await page.getByRole('button',{name:'Ring',exact:true}).click();
+  const firstRing = page.locator('.vision-grid-ring > .vision-tile:visible').first();
+  const picture = firstRing.locator('img.vision-picture');
+  await expect(picture).toBeVisible();
+  expect((await picture.boundingBox())!.y).toBe(0);
+  expect((await picture.boundingBox())!.x).toBe(0);
+  expect((await picture.boundingBox())!.width).toBe(390);
+  await expect.poll(async () => (await firstRing.locator('.vision-ring-status').boundingBox())!.y).toBeGreaterThanOrEqual(59);
+  await page.getByRole('button',{name:'All Cameras',exact:true}).click();
   await page.setViewportSize({width:844,height:390});
   await insets(0,59,21,59);
   await fillsViewport();
@@ -184,7 +204,8 @@ test('Start wall stays in the menu and Reload App fetches a new document without
   const configs = await viewer(page,true);
   await page.keyboard.press('Tab');
   await page.getByRole('button',{name:'Open menu'}).focus();
-  await expect(page.locator('meta[name="apple-mobile-web-app-status-bar-style"]')).toHaveCount(0);
+  await expect(page.locator('head meta[name="apple-mobile-web-app-status-bar-style"]')).toHaveCount(1);
+  await expect(page.locator('head meta[name="apple-mobile-web-app-status-bar-style"]')).toHaveAttribute('content','black-translucent');
   await expect(page.locator('meta[name="mobile-web-app-capable"]')).toHaveAttribute('content','yes');
   await expect(page.locator('meta[name="apple-mobile-web-app-capable"]')).toHaveAttribute('content','yes');
   await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content','MPDEE Vision');

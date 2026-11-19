@@ -14,10 +14,10 @@ const barlow = Barlow({
 export const metadata: Metadata = {
   title: "Home Camera Access",
   description: "Private authorised access only.",
-  // Let iOS size its native status bar. The legacy black-translucent mode can
-  // leave a status-bar-height strip below standalone pages (WebKit 313800).
-  // appleWebApp would reinsert a status-bar-style tag even when that field is omitted.
-  other: { "mobile-web-app-capable": "yes", "apple-mobile-web-app-capable": "yes", "apple-mobile-web-app-title": "MPDEE Vision" },
+  // Match the Dell PWA: camera pixels can paint beneath the native status bar.
+  // The document, wall and startup share one large viewport; only controls use insets.
+  other: { "mobile-web-app-capable": "yes", "apple-mobile-web-app-capable": "yes", "apple-mobile-web-app-title": "MPDEE Vision",
+    "apple-mobile-web-app-status-bar-style": "black-translucent" },
   robots: {
     index: false,
     follow: false,
