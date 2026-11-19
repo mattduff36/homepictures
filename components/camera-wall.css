@@ -1,7 +1,7 @@
 /* Dell Vision presentation; deliberately scoped away from the setup pages. */
 .vision-app,.vision-login,.vision-startup,.vision-menu,.vision-settings { font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#f3f5f7; color-scheme:dark; box-sizing:border-box; }
 .vision-app *, .vision-login *, .vision-menu *, .vision-settings * { box-sizing:border-box; }
-.vision-app { position:fixed; inset:0; width:100%; height:100dvh;  overflow:hidden; background:#0b0d10; }
+.vision-app { --vision-chrome-background:rgb(8 8 8 / .78); --vision-chrome-border:rgb(255 255 255 / .20); position:fixed; inset:0; width:100%; height:100dvh;  overflow:hidden; background:#0b0d10; }
 .vision-app button,.vision-menu button,.vision-settings button { cursor:pointer; border-radius:0; }
 .vision-app button:focus-visible,.vision-menu :is(button,input,select,a):focus-visible,.vision-settings :is(button,input,select,a):focus-visible { outline:2px solid #fff; outline-offset:2px; }
 .vision-app button:disabled,.vision-menu button:disabled { opacity:.5; cursor:default; }
@@ -18,10 +18,16 @@
 .vision-placeholder span { max-width:85%; text-align:center; line-height:1.5; }
 .vision-icon { width:44px; height:44px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #5b6876; background:#0b0d10; color:#f3f5f7; flex-shrink:0; font-size:27px; }
 .vision-icon svg,.vision-start svg,.vision-menu-action svg { width:19px; height:19px; }
-.vision-badge { color:#fff; background:#000; border:1px solid rgb(255 255 255 / .5); font-size:11px; line-height:1; text-shadow:0 1px 3px #000; animation:camera-badge-clear-background .35s ease 30s both; }
+.vision-app :is(.vision-badge,.vision-chrome,.vision-burger,.vision-start) { background:var(--vision-chrome-background); border-color:var(--vision-chrome-border); }
+.vision-tile-play { display:grid; place-items:center; cursor:pointer; }
+.vision-badge { color:#fff; border:1px solid; font-size:11px; line-height:1; text-shadow:0 1px 3px #000; }
 .vision-name { position:absolute; bottom:0; right:0; z-index:3; display:flex; align-items:center; min-height:22px; max-width:calc(100% - 65px); padding:4px 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
-.vision-status { position:absolute; top:0; left:0; z-index:3; padding:4px 6px; font-size:10px; letter-spacing:.04em; pointer-events:none; }
-.vision-status.is-live { color:#4dd28a; }
+.vision-recording { position:absolute; top:7px; right:7px; z-index:3; width:8px; height:8px; border-radius:50%; background:rgb(255 255 255 / .22); pointer-events:none; }
+.vision-recording[data-recording-state="recording"],.vision-ring-live::before { background:rgb(225 29 46 / .6); }
+@media (hover:hover) and (pointer:fine) { .vision-recording { width:10px; height:10px; } }
+.vision-solo .vision-recording { top:max(12px,env(safe-area-inset-top)); left:max(12px,env(safe-area-inset-left)); right:auto; }
+.vision-ring-live { position:absolute; top:max(12px,env(safe-area-inset-top)); left:max(12px,env(safe-area-inset-left)); z-index:3; display:flex; align-items:center; gap:5px; padding:4px 6px; pointer-events:none; }
+.vision-ring-live::before { content:""; width:8px; height:8px; border-radius:50%; }
 .vision-budget { position:absolute; top:0; right:0; z-index:3; padding:4px 6px; font-size:10px; pointer-events:none; }
 .vision-tile-controls { position:absolute; left:0; bottom:0; z-index:4; display:flex; align-items:flex-end; gap:2px; }
 .vision-tile-controls .vision-icon { width:34px; height:34px; }
@@ -32,9 +38,8 @@
 .vision-expand { position:absolute; right:0; top:24px; z-index:6; width:32px; height:32px; opacity:0; transition:opacity .15s; }
 .vision-feature-main .vision-expand { top:auto; bottom:28px; }
 .vision-tile:hover .vision-expand,.vision-tile:focus-within .vision-expand { opacity:1; }
-.vision-rotation-state { position:absolute; top:8px; left:50%; transform:translateX(-50%); padding:5px 8px; z-index:4; pointer-events:none; }
-.vision-burger { position:fixed; top:max(24px,calc(env(safe-area-inset-top) + 16px)); right:max(24px,calc(env(safe-area-inset-right) + 16px)); z-index:40; opacity:.85; background:#090b0dd9; border-color:#ffffff40; }
-.vision-burger:hover,.vision-burger:focus-visible { opacity:1; }
+.vision-rotation-state { position:absolute; top:8px; left:50%; transform:translateX(-50%); width:34px; height:34px; z-index:4; }
+.vision-burger { position:fixed; top:max(24px,calc(env(safe-area-inset-top) + 16px)); right:max(24px,calc(env(safe-area-inset-right) + 16px)); z-index:40; background:#090b0dd9; border-color:#ffffff40; }
 .vision-wall-dots { position:fixed; bottom:max(10px,env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); z-index:30; display:flex; gap:0; background:#0005; padding:0 4px; }
 .vision-wall-dots button { display:grid; place-items:center; width:36px; height:36px; border:0; background:transparent; }
 .vision-wall-dots span { display:block; width:7px; height:7px; border-radius:50%; background:#fff6; box-shadow:0 0 2px #000; }
@@ -45,7 +50,6 @@
 .vision-empty { position:absolute; inset:35% 10% auto; text-align:center; color:#b5c0cb; }
 .vision-tile.vision-solo { position:fixed!important; inset:0!important; z-index:80!important; width:100%!important; height:100dvh!important;  background:#000; opacity:1!important; }
 .vision-solo .vision-picture { object-fit:contain; }
-.vision-solo .vision-status { top:max(12px,env(safe-area-inset-top)); left:max(12px,env(safe-area-inset-left)); }
 .vision-solo .vision-budget { top:max(12px,env(safe-area-inset-top)); right:max(68px,env(safe-area-inset-right)); }
 .vision-solo .vision-tile-controls { left:max(12px,env(safe-area-inset-left)); bottom:max(16px,env(safe-area-inset-bottom)); }
 .vision-solo .vision-tile-controls .vision-icon { width:44px; height:44px; }
@@ -53,6 +57,7 @@
 .vision-close { position:absolute; top:max(12px,env(safe-area-inset-top)); right:max(12px,env(safe-area-inset-right)); z-index:8; }
 .vision-play-area { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; align-items:center; pointer-events:none; gap:12px; padding:60px 24px; text-align:center; }
 .vision-play { display:flex; gap:12px; align-items:center; padding:15px 25px; background:#0b0d10; border:1px solid #89939e; color:#fff; font-weight:600; font-size:18px; pointer-events:auto; }
+.vision-tile-play .vision-play { pointer-events:none; }
 .vision-play svg { width:26px; height:26px; }
 .vision-play-area p { font-size:12px; color:#ddd; background:#000b; padding:5px 9px; }
 .vision-menu { position:fixed; inset:max(76px,calc(env(safe-area-inset-top) + 68px)) max(24px,calc(env(safe-area-inset-right) + 16px)) auto auto; margin:0; max-width:calc(100vw - 32px); width:260px; max-height:calc(100dvh - 110px - env(safe-area-inset-top)); overflow:auto; background:#0a0c0ff5; border:1px solid #ffffff35; padding:6px; box-shadow:0 14px 36px #0006; backdrop-filter:blur(14px); }

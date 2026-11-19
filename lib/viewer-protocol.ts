@@ -35,7 +35,7 @@ export function isViewerFailureCode(value: unknown): value is ViewerFailureCode 
   return typeof value === "string" && Object.hasOwn(VIEWER_FAILURE_MESSAGES, value);
 }
 export const VIEWER_ACTIONS = [
-  "login", "session", "sessions", "revoke-session", "config", "offer", "poll", "heartbeat", "snapshot", "stop", "logout",
+  "login", "session", "sessions", "revoke-session", "config", "offer", "poll", "heartbeat", "snapshot", "recording", "stop", "logout",
 ] as const;
 export type ViewerAction = (typeof VIEWER_ACTIONS)[number];
 export type SavedSession = { id: string; issuedAt: number; expires: number; current: boolean };
@@ -106,4 +106,24 @@ export function validSnapshot(value: unknown): value is ViewerSnapshot {
 export function isSdp(value: unknown): value is string {
   return typeof value === "string" && value.startsWith("v=0\r\n") &&
     new TextEncoder().encode(value).length <= VIEWER_MAX_SDP;
+}
+
+export const RECORDING_LABELS = {
+  recording: "Recording — recent footage saved by Frigate",
+  idle: "Not recording — recording is switched off",
+  stalled: "Not recording — no recent footage from Frigate",
+  unconfigured: "Recording is not configured for this camera",
+  unknown: "Recording status unavailable",
+} as const;
+
+export type RecordingState = keyof typeof RECORDING_LABELS;
+export type ViewerRecording = { cameras: Partial<Record<CameraId, { state: RecordingState; validForMs: number }>> };
+
+export function validRecording(value: unknown): value is ViewerRecording {
+  return exactFields(value, ["cameras"]) && isRecord(value.cameras) &&
+    Object.entries(value.cameras).every(([id, row]) =>
+      isCameraId(id) && !id.startsWith("ring-") && exactFields(row, ["state", "validForMs"]) &&
+      typeof row.state === "string" && Object.hasOwn(RECORDING_LABELS, row.state) &&
+      typeof row.validForMs === "number" && Number.isInteger(row.validForMs) &&
+      row.validForMs > 0 && row.validForMs <= 20000);
 }

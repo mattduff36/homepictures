@@ -166,7 +166,7 @@ export class ViewerPlayer {
     this.deps.update(this.state);
   }
 
-  stop(message = "Stopped. Press Watch to start again.", status: PlayerStatus = "stopped") {
+  stop(message = "Stopped. Press Play to start again.", status: PlayerStatus = "stopped") {
     ++this.generation;
     this.abort?.abort();
     this.abort = null;

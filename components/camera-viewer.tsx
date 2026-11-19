@@ -13,16 +13,75 @@ import {
   ViewerPlayer, type PlayerState,
 } from "@/lib/viewer-player";
 import {
-  validSnapshot, type ViewerCamera, type ViewerSnapshot,
+  RECORDING_LABELS, validRecording, validSnapshot, type RecordingState, type ViewerCamera, type ViewerSnapshot,
 } from "@/lib/viewer-protocol";
 
-function Icon({ name }: { name: "play" | "stop" | "sound" | "muted" | "refresh" | "close" | "menu" | "image" | "expand" }) {
-  const paths = { play: "m8 5 11 7-11 7Z", stop: "M6 6h12v12H6Z", sound: "m11 5-6 4H2v6h3l6 4ZM15 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14", muted: "m11 5-6 4H2v6h3l6 4ZM16 9l6 6m0-6-6 6", refresh: "M20 7v5h-5M4 17v-5h5M5 7a8 8 0 0 1 14-1l1 6M4 12l1 6a8 8 0 0 0 14-1", close: "m6 6 12 12M6 18 18 6", menu: "M4 6h16M4 12h16M4 18h16", image: "M3 3h18v18H3ZM3 17l6-6 4 4 3-3 5 5M7 7h2", expand: "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" };
+function Icon({ name }: { name: "play" | "stop" | "sound" | "muted" | "refresh" | "close" | "menu" | "image" | "expand" | "pause" }) {
+  const paths = { pause: "M9 5v14m6-14v14", play: "m8 5 11 7-11 7Z", stop: "M6 6h12v12H6Z", sound: "m11 5-6 4H2v6h3l6 4ZM15 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14", muted: "m11 5-6 4H2v6h3l6 4ZM16 9l6 6m0-6-6 6", refresh: "M20 7v5h-5M4 17v-5h5M5 7a8 8 0 0 1 14-1l1 6M4 12l1 6a8 8 0 0 0 14-1", close: "m6 6 12 12M6 18 18 6", menu: "M4 6h16M4 12h16M4 18h16", image: "M3 3h18v18H3ZM3 17l6-6 4 4 3-3 5 5M7 7h2", expand: "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" };
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>;
 }
 
-function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, featured, paused, onFeature, onRotation, onSolo, onSnapshot }: {
-  camera: ViewerCamera; fleet: ViewerFleet; visible: boolean;
+function useRecordingStatus(enabled: boolean) {
+  const [states, setStates] = useState<Record<string, RecordingState>>({});
+  useEffect(() => {
+    if (!enabled) return;
+    let request: AbortController | undefined;
+    let pollTimer: ReturnType<typeof setTimeout>;
+    let expiryTimer: ReturnType<typeof setTimeout>;
+    const stop = () => {
+      request?.abort();
+      request = undefined;
+      clearTimeout(pollTimer);
+      clearTimeout(expiryTimer);
+    };
+    const poll = async () => {
+      const current = new AbortController();
+      request = current;
+      const started = performance.now();
+      try {
+        const result = await viewerApi("recording", {}, current.signal);
+        if (current.signal.aborted) return;
+        if (!validRecording(result)) throw new Error("Invalid recording status");
+        clearTimeout(expiryTimer);
+        const update = () => {
+          const elapsed = performance.now() - started;
+          const fresh = Object.entries(result.cameras).filter(([, row]) => row.validForMs > elapsed);
+          setStates(Object.fromEntries(fresh.map(([id, row]) => [id, row.state])));
+          if (fresh.length) {
+            expiryTimer = setTimeout(update, Math.min(...fresh.map(([, row]) => row.validForMs)) - elapsed);
+          }
+        };
+        update();
+      } catch {
+        if (!current.signal.aborted) {
+          clearTimeout(expiryTimer);
+          setStates({});
+        }
+      } finally {
+        if (!current.signal.aborted) pollTimer = setTimeout(poll, 10_000);
+      }
+    };
+    const refresh = () => {
+      stop();
+      setStates({});
+      if (!document.hidden) void poll();
+    };
+    refresh();
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pagehide", stop);
+    window.addEventListener("pageshow", refresh);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("pagehide", stop);
+      window.removeEventListener("pageshow", refresh);
+    };
+  }, [enabled]);
+  return enabled ? states : {};
+}
+
+function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, featured, paused, onFeature, onRotation, onSolo, onSnapshot, recording }: {
+  recording: RecordingState; camera: ViewerCamera; fleet: ViewerFleet; visible: boolean;
   expired: () => void; dataSaver: boolean; epoch: number;
   slot: string; featured: boolean; paused: boolean; onFeature: (id: string) => void;
   onRotation: () => void; onSolo: (id: string | null, kind?: ViewerCamera["kind"]) => void;
@@ -158,14 +217,10 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
   function play() {
     if (document.hidden || navigator.onLine === false) { setError("You're offline. Reconnect, then press Play."); return; }
     setError("");
-    void (ring ? fleet.playRingFullscreen(camera) : fleet.watch([camera]))
+    void (ring ? fleet.playRingFullscreen(camera) : fleet.retrySwann(camera))
       .catch(() => setError("Could not start this camera. Please try again."));
   }
-  function retry() {
-    if (document.hidden || navigator.onLine === false) { setError("You're offline. Reconnect, then press Retry."); return; }
-    setError("");
-    void fleet.retrySwann(camera).catch(() => setError("Could not restart this camera. Please try again."));
-  }
+  const swannCanPlay = !ring && !active;
   const ageLabel = age === null ? "—" : age < 60 ? `${Math.floor(age / 10) * 10}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`;
   const snapshotDescription = age === null ? "Snapshot capture time unknown" : `Snapshot captured ${age}s ago${stale ? " (stale)" : ""}`;
   return (
@@ -174,56 +229,36 @@ function CameraTile({ camera, fleet, visible, expired, dataSaver, epoch, slot, f
       aria-label={`${camera.label} ${camera.kind} camera${fullscreen ? " fullscreen" : ""}`}>
       <video ref={video} className={`vision-picture ${active ? "" : "hidden"}`} muted autoPlay playsInline aria-label={`${camera.label} live video`} />
       {ring && !active && snapshot ? <img className="vision-picture" src={`data:image/jpeg;base64,${snapshot.image}`} alt={`${camera.label} snapshot, not live`} /> : null}
-      {!fullscreen ? <button className="vision-tile-open"
-        onClick={() => mainFeature ? onRotation() : featured ? onFeature(camera.id) : openFullscreen()}
-        onDoubleClick={featured ? openFullscreen : undefined}
-        aria-pressed={mainFeature ? paused : undefined}
-        aria-label={mainFeature ? `${paused ? "Resume" : "Pause"} camera rotation` : featured ? `Feature ${camera.label}` : `Open ${camera.label} fullscreen`} /> : null}
-      {featured && !fullscreen ? <button className="vision-expand vision-icon vision-badge" onClick={openFullscreen} aria-label={`Open ${camera.label} fullscreen`} title="Open fullscreen"><Icon name="expand" /></button> : null}
-      {!active && !(ring && snapshot) ? <div className="vision-placeholder" aria-hidden="true"><Icon name={ring ? "image" : "play"} /><span>{snapshotBusy ? "Loading snapshot…" : ring ? "Snapshot unavailable" : state.status === "error" ? "Connection unavailable" : state.status === "stopped" ? state.message : "Ready to watch"}</span></div> : null}
-      <span className={`vision-status vision-badge ${state.status === "playing" ? "is-live" : ""}`} role="status">{state.status === "playing" ? "LIVE" : state.status === "connecting" ? "Connecting…" : ring ? "SNAPSHOT" : state.status === "error" ? "UNAVAILABLE" : state.status === "stopped" ? "PAUSED" : "SD"}</span>
+      {swannCanPlay ? <button className="vision-tile-open vision-tile-play" onClick={play} aria-label={`Play ${camera.label}`}>
+        <span className="vision-play vision-chrome"><Icon name="play" />Play</span>
+      </button> : !fullscreen ? <button className="vision-tile-open"
+        disabled={state.status === "connecting"}
+        onClick={() => ring && featured ? onFeature(camera.id) : openFullscreen()}
+        onDoubleClick={ring && featured ? openFullscreen : undefined}
+        aria-label={ring && featured ? `Feature ${camera.label}` : `Open ${camera.label} fullscreen`} /> : null}
+      {ring && featured && !fullscreen ? <button className="vision-expand vision-icon vision-badge" onClick={openFullscreen} aria-label={`Open ${camera.label} fullscreen`} title="Open fullscreen"><Icon name="expand" /></button> : null}
+      {ring && !fullscreen && !active && !snapshot ? <div className="vision-placeholder" role="status"><Icon name="image" /><span>{snapshotBusy ? "Loading snapshot…" : "Snapshot unavailable"}</span></div> : null}
+      {state.status === "connecting" ? <div className="vision-placeholder" role="status"><span>Connecting…</span></div> : null}
+      {!ring ? <span className="vision-recording" role="img" data-recording-state={recording} aria-label={RECORDING_LABELS[recording]} title={RECORDING_LABELS[recording]} /> : null}
+      {ring && state.status === "playing" ? <span className="vision-ring-live vision-badge">LIVE</span> : null}
       <span className="vision-name vision-badge">{camera.label}</span>
-      {mainFeature && paused && !fullscreen ? <span className="vision-rotation-state vision-badge">Rotation paused</span> : null}
-      {active && remaining !== null ? <span className="vision-budget vision-badge" aria-label={`Viewing ends in ${Math.floor(remaining / 60)} minutes ${remaining % 60} seconds`}>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span> : null}
+      {mainFeature && !fullscreen ? <button className="vision-rotation-state vision-icon vision-badge" onClick={onRotation} aria-pressed={paused} aria-label={`${paused ? "Resume" : "Pause"} camera rotation`}><Icon name={paused ? "play" : "pause"} /></button> : null}
+      {fullscreen && active && remaining !== null ? <span className="vision-budget vision-badge" aria-label={`Viewing ends in ${Math.floor(remaining / 60)} minutes ${remaining % 60} seconds`}>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span> : null}
       <div className="vision-tile-controls">
         {ring && !active ? <span className="vision-age vision-badge" title={snapshotDescription} aria-label={snapshotDescription}><Icon name="image" />{ageLabel}</span> : null}
         {ring && !active ? <button className="vision-icon vision-badge" disabled={snapshotBusy} onClick={() => void refreshSnapshot()} aria-label={`Refresh ${camera.label} snapshot`} title="Refresh snapshot"><Icon name="refresh" /></button> : null}
         {active ? <><button className="vision-icon vision-badge" disabled={state.status !== "playing"} aria-pressed={!state.muted} aria-label={`${state.muted ? "Unmute" : "Mute"} ${camera.label}`} onClick={() => void fleet.sound(camera.id)}><Icon name={state.muted ? "muted" : "sound"} /></button><button className="vision-icon vision-badge" onClick={() => player.current?.stop()} aria-label={`Stop ${camera.label}`}><Icon name="stop" /></button></> : null}
-        {!ring && !active && state.status !== "idle" ? <button className="vision-icon vision-badge" onClick={retry} aria-label={`Retry ${camera.label}`} title="Retry camera"><Icon name="play" /></button> : null}
       </div>
       {fullscreen ? <>
-        <button className="vision-close vision-icon" onClick={closeFullscreen} aria-label="Close fullscreen"><Icon name="close" /></button>
-        {!active ? <div className="vision-play-area"><button className="vision-play" disabled={ring && dataSaver} onClick={play}><Icon name="play" />Play</button><p>{ring ? dataSaver ? "Data Saver is on. Turn it off in the menu to play." : "Starts a Ring Live View · up to 5 minutes" : "Live video · starts muted"}</p></div> : null}
+        <button className="vision-close vision-icon vision-chrome" onClick={closeFullscreen} aria-label="Close fullscreen"><Icon name="close" /></button>
+        {ring && !active ? <div className="vision-play-area"><button className="vision-play vision-chrome" disabled={dataSaver} onClick={play}><Icon name="play" />Play</button><p>{dataSaver ? "Data Saver is on. Turn it off in the menu to play." : "Starts a Ring Live View · up to 5 minutes"}</p></div> : null}
       </> : null}
-      {error || state.status === "error" ? <p className="vision-camera-error" role="alert">{error || state.message}</p> : null}
+      {(error && (!ring || fullscreen || snapshot)) || state.status === "error" ? <p className="vision-camera-error" role="alert">{error || state.message}</p> : null}
     </section>
   );
 }
 
 export function CameraViewer({ enabled }: { enabled: boolean }) {
-  useEffect(() => {
-    let pending: ReturnType<typeof setTimeout> | undefined;
-    const restore = () => {
-      clearTimeout(pending);
-      pending = undefined;
-      for (const animation of document.getAnimations()) {
-        if (animation instanceof CSSAnimation && animation.animationName === "camera-badge-clear-background") {
-          animation.currentTime = 0;
-          animation.play();
-        }
-      }
-    };
-    const move = () => { if (pending === undefined) pending = setTimeout(restore, 100); };
-    document.addEventListener("pointerdown", restore, { passive: true, capture: true });
-    document.addEventListener("pointermove", move, { passive: true, capture: true });
-    document.addEventListener("keydown", restore, true);
-    return () => {
-      clearTimeout(pending);
-      document.removeEventListener("pointerdown", restore, true);
-      document.removeEventListener("pointermove", move, true);
-      document.removeEventListener("keydown", restore, true);
-    };
-  }, []);
   const [fleet] = useState(() => new ViewerFleet());
   const mounted = useRef(false);
   const authGeneration = useRef(0);
@@ -232,6 +267,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [group, setGroup] = useState<"all" | "swann" | "ring">("all");
+  const recordingStates = useRecordingStatus(group !== "ring" && !!account?.cameras.some(camera => camera.kind === "swann"));
   const menu = useRef<HTMLDialogElement>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [preferences, setPreferences] = useState<VisionPreferences>(DEFAULT_VISION_PREFERENCES);
@@ -472,10 +508,10 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
           {account.cameras.map(camera => <CameraTile key={camera.id} camera={camera} fleet={fleet}
             visible={group === "all" || group === camera.kind} dataSaver={dataSaver} epoch={epoch} expired={expired}
             featured={featured} slot={slots[camera.id] ?? ""} paused={paused} onFeature={setFeaturedId}
-            onRotation={() => setPaused(value => !value)} onSolo={changeSolo} onSnapshot={receiveSnapshot} />)}
+            onRotation={() => setPaused(value => !value)} onSolo={changeSolo} onSnapshot={receiveSnapshot} recording={recordingStates[camera.id] ?? "unknown"} />)}
           {featured && selectedRing ? <div className={`vision-feature-ring-copy vision-feature-bottom-${ringIndex + 1}`} aria-hidden="true">
             {snapshots[selectedRing.id] ? <img className="vision-picture" src={`data:image/jpeg;base64,${snapshots[selectedRing.id].image}`} alt="" /> : <div className="vision-placeholder"><Icon name="image" /></div>}
-            <span className="vision-status vision-badge">SNAPSHOT</span><span className="vision-name vision-badge">{selectedRing.label}</span>
+            <span className="vision-name vision-badge">{selectedRing.label}</span>
           </div> : null}
         </div>
         <button className="vision-burger vision-icon" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => { menu.current?.showModal(); setMenuOpen(true); }}><Icon name="menu" /></button>

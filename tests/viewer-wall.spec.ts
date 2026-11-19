@@ -44,6 +44,9 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
       if (firstSession) { firstSession = false; await initialSession; }
       return route.fulfill({ json: { username:'test', cameras:VIEWER_CAMERAS, expires:Date.now()/1000+3600 } });
     }
+    if (action === 'recording') return route.fulfill({ json: { cameras: {
+      'shed': {state:'recording', validForMs:20000},
+    } } });
     if (action === 'snapshot') return route.fulfill({ status:503, json:{error:'snapshot_unavailable'} });
     if (action === 'sessions') return route.fulfill({ json: { limit:5, sessions:[
       {id:currentId, issuedAt:1800000000, expires:1800604800, current:true},
@@ -127,26 +130,31 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await expect(page.locator('.vision-tile:visible')).toHaveCount(5);
   await page.getByRole('button',{name:'Start wall',exact:true}).filter({visible:true}).click();
   await expect.poll(()=>configs.length).toBe(11);
-  expect(configs.slice(6).every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
-  await page.getByRole('button',{name:'Open Shed fullscreen',exact:true}).click();
-  await expect(page.getByRole('dialog',{name:'Shed swann camera fullscreen'})).toBeVisible();
-  expect(configs).toHaveLength(11);
-  await page.getByRole('button',{name:'Close fullscreen'}).click();
+  expect(configs.slice(6,11).every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
+  const shed = page.getByRole('region',{name:'Shed swann camera'});
+  const playShed = shed.getByRole('button',{name:'Play Shed',exact:true});
+  await expect(playShed).toBeVisible();
+  await expect(shed.locator('.vision-recording')).toHaveAttribute('data-recording-state','recording');
+  await expect(shed).not.toContainText('PAUSED');
+  await playShed.click({position:{x:12,y:35}});
+  await expect.poll(()=>configs.length).toBe(12);
+  expect(configs[11]).toEqual({camera:'shed',mode:'live'});
+  await expect(page.getByRole('dialog',{name:'Shed swann camera fullscreen'})).toHaveCount(0);
   await page.getByRole('button',{name:'All Cameras',exact:true}).click();
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await expect(page.locator('.vision-start-floating')).toBeVisible();
-  expect(configs).toHaveLength(11);
+  expect(configs).toHaveLength(12);
   await page.getByRole('button',{name:'Open menu'}).click();
   await page.getByRole('button',{name:'Sign out',exact:true}).click();
   await page.getByLabel('Username',{exact:true}).fill('test');
   await page.getByLabel('Password',{exact:true}).fill('fixture-password');
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
-  await expect.poll(()=>configs.length).toBe(16);
+  await expect.poll(()=>configs.length).toBe(17);
   await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toHaveCount(0,{timeout:16000});
   await expect(page.locator('.vision-start-floating')).toHaveCount(0);
   await expect(page.locator('dialog[open]')).toHaveCount(0);
-  expect(configs.slice(11).every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
+  expect(configs.slice(12).every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
   await page.getByRole('button',{name:'Swann',exact:true}).click();
   await page.setViewportSize({width:844,height:390});
   await expectRows(page, [2,3]);

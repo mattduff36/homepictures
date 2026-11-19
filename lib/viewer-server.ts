@@ -5,7 +5,7 @@ import { hasJsonContentType } from "./request";
 import { gatewayDiagnostics, transportCodes } from "./gateway-diagnostics";
 import {
   exactFields, isRecord, isSdp, isViewerToken, isCameraId, isLiveMode, validCameras, validPoll,
-  validSnapshot, VIEWER_ACTIONS,
+  validRecording, validSnapshot, VIEWER_ACTIONS,
   VIEWER_COOKIE, VIEWER_GATEWAY_ORIGIN, VIEWER_MAX_JSON, VIEWER_SESSION_SECONDS,
   VIEWER_MAX_SNAPSHOT_JSON,
   validSavedSessions, isViewerFailureCode, VIEWER_FAILURE_MESSAGES, type ViewerFailureCode,
@@ -298,6 +298,10 @@ export async function handleViewerRequest(
     }
     if (action === "poll") {
       if (!validPoll(value)) throw new ViewerError(502, "viewer_invalid_response");
+      return json(value);
+    }
+    if (action === "recording") {
+      if (!validRecording(value)) throw new ViewerError(502, "viewer_invalid_response");
       return json(value);
     }
     if (action === "snapshot") {
