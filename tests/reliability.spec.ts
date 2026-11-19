@@ -2,6 +2,10 @@ import {test, expect, type Page} from '@playwright/test';
 import {VIEWER_CAMERAS} from '../lib/viewer-protocol';
 import {validIncident, type Incident} from '../lib/diagnostics';
 
+// These API-mocked scenarios need predictable Playwright request interception.
+// Real service-worker installation/offline/recovery stays enabled in offline.spec.ts.
+test.use({serviceWorkers: "block"});
+
 async function localPage(page: Page) {
   await page.route('**/watch', async route => {
     const response = await route.fetch(); const headers = response.headers();
@@ -27,11 +31,12 @@ test('a gateway interruption can recheck the saved sign-in without another login
   });
   await page.goto('/watch');
   await expect(page.getByRole('button',{name:'Check saved sign-in again'})).toBeVisible();
+  // Check delivery while the failed request is still displayed, before retry starts media.
+  await expect.poll(()=>events.length).toBeGreaterThan(0);
+  expect(events.every(validIncident)).toBe(true);
   await page.getByRole('button',{name:'Check saved sign-in again'}).click();
   await expect(page.getByRole('button',{name:'Open menu'})).toBeVisible();
   expect(checks).toBe(2); expect(logins).toBe(0); expect(allocations).toBe(0);
-  await expect.poll(()=>events.length).toBeGreaterThan(0);
-  expect(events.every(validIncident)).toBe(true);
 });
 
 test('unexpected browser failures give a usable notice even when the logging service fails', async ({page}) => {

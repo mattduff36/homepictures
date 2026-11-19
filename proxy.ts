@@ -5,9 +5,17 @@ import {
   buildContentSecurityPolicy,
   shouldDisableStore,
   STATIC_SECURITY_HEADERS,
+  offlineAssetHeaders,
 } from "@/lib/security-headers";
 
 export function proxy(request: NextRequest) {
+  const publicOfflineHeaders = offlineAssetHeaders(request.nextUrl.pathname);
+  if (publicOfflineHeaders) {
+    const response = NextResponse.next();
+    for (const header of STATIC_SECURITY_HEADERS) response.headers.set(header.key, header.value);
+    for (const [name, value] of Object.entries(publicOfflineHeaders)) response.headers.set(name, value);
+    return response;
+  }
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const isDev = process.env.NODE_ENV === "development";
   const cameraOrigin = getCameraOrigin(CAMERA_URL);

@@ -4,6 +4,7 @@ import {
   STATIC_SECURITY_HEADERS,
   buildContentSecurityPolicy,
   shouldDisableStore,
+  offlineAssetHeaders,
 } from "./security-headers";
 
 const cameraOrigin = "https://canary-camera.example.ts.net";
@@ -16,10 +17,22 @@ test("production CSP includes framing and object restrictions without third-part
   assert.match(csp, /form-action 'self'/);
   assert.match(csp, /nonce-abc123/);
   assert.match(csp, /connect-src 'self'/);
+  assert.match(csp, /worker-src 'self'/);
   assert.doesNotMatch(csp, /tailscale\.com/);
   assert.doesNotMatch(csp, /unsafe-eval/);
   assert.doesNotMatch(csp, /connect-src \*/);
   assert.doesNotMatch(csp, /\*\.ts\.net/);
+});
+
+test("offline assets have a narrow script-free policy without changing authenticated routes", () => {
+  assert.match(offlineAssetHeaders("/offline.html")?.["Content-Security-Policy"] ?? "", /default-src 'none'/);
+  assert.doesNotMatch(offlineAssetHeaders("/offline.html")?.["Content-Security-Policy"] ?? "", /unsafe-inline|script-src/);
+  assert.equal(offlineAssetHeaders("/offline.css")?.["Content-Type"], "text/css; charset=utf-8");
+  assert.equal(offlineAssetHeaders("/offline-worker.js")?.["Service-Worker-Allowed"], "/");
+  assert.match(offlineAssetHeaders("/offline-worker.js")?.["Cache-Control"] ?? "", /no-store/);
+  for (const path of ["/", "/watch", "/setup", "/api/viewer/session", "/api/offline.html", "/offline.html/extra", "/offline-worker.js.map"]) {
+    assert.equal(offlineAssetHeaders(path), null);
+  }
 });
 
 test("production CSP permits only the exact validated camera origin in connect-src", () => {

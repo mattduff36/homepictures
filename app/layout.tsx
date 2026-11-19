@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Barlow } from "next/font/google";
 import "./globals.css";
 import { RuntimeRecovery } from "@/components/runtime-recovery";
+import { OfflineSupport } from "@/components/offline-support";
 
 const barlow = Barlow({
   subsets: ["latin"],
@@ -40,7 +41,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full bg-canvas font-sans text-ink">
         <noscript><div className="vision-noscript"><h1>MPDEE Vision needs JavaScript</h1>
           <p>Enable JavaScript for this site, then reload to sign in and view cameras.</p><a href="/watch">Reload cameras</a></div></noscript>
-        {children}<RuntimeRecovery />
+        {children}<RuntimeRecovery /><OfflineSupport />
       </body>
     </html>
   );

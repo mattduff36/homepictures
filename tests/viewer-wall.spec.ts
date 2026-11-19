@@ -1,6 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
 import { VIEWER_CAMERAS } from '../lib/viewer-protocol';
 
+// These API-mocked scenarios need predictable Playwright request interception.
+// Real service-worker installation/offline/recovery stays enabled in offline.spec.ts.
+test.use({serviceWorkers: "block"});
+
 test.beforeEach(async ({page}) => {
   // These UI tests deliberately reject mocked config requests before peer construction.
   // Supply the absent capability in Windows WebKit so the same mocked failure path is exercised.

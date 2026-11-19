@@ -4,6 +4,9 @@ Website error recovery, safe incident logging and the local owner review/resolut
 workflow are documented in [docs/RELIABILITY.md](docs/RELIABILITY.md). The focused
 code audit and remaining optional improvements are in [docs/RELIABILITY-AUDIT.md](docs/RELIABILITY-AUDIT.md).
 
+Automated source-build gates are described in [docs/RELEASE-CHECKS.md](docs/RELEASE-CHECKS.md).
+The narrowly cached offline recovery page and rollback procedure are in [docs/OFFLINE.md](docs/OFFLINE.md).
+
 Website camera viewer and private-access onboarding for authorised friends and
 family. `/watch` offers individually authorised Swann/Ring cameras without
 Tailscale or installation. Live media travels through WebRTC/TURN, not Vercel.

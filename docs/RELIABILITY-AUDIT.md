@@ -21,12 +21,12 @@ The viewer already had finite leases, 20-second requests, a 35-second connection
 | Medium | Failure-path browser coverage absent | Added request, telemetry, unsupported-browser and real React-render failure scenarios without production fault switches. |
 | Lower | Default framework loading/404 only; no JavaScript-disabled explanation | Added lightweight branded screens and a no-JavaScript explanation. |
 | Lower | Fullscreen focus trap omitted volume input | Included enabled form controls and excluded hidden elements. |
-| Lower | No repository CI test workflow found | Remains a suggested follow-up: run existing type/lint/tests/build on changes. This change adds reproducible focused commands but no unrelated CI provisioning. |
-| Lower | No website-specific public health/uptime check | Remains optional. A no-secrets website health check would prove HTTP availability only, not moving camera video. Existing gateway diagnostics remain useful. |
-| Optional | No offline app shell/service worker | Remains optional. Do not cache authentication, camera APIs or media. Loaded-page offline recovery already exists. |
+| Lower | No repository CI test workflow found | Follow-up implemented: GitHub checks PRs/main and Vercel source builds execute the same type/lint/unit/build gate before publication. See RELEASE-CHECKS.md. |
+| Lower | No website-specific public health/uptime check | Owner chose not to add this in the follow-up. Existing gateway diagnostics remain useful. HTTP availability alone would not establish moving camera video. |
+| Optional | No offline app shell/service worker | Follow-up implemented: script-free fallback and explicit Retry after a prior successful visit, with only three public assets cached. Authentication, camera APIs and media remain uncached. See OFFLINE.md. |
 | Device acceptance | Windows WebKit does not establish physical Safari WebRTC support | Verify an actual iPhone on mobile data for live video/audio when convenient; mocked browser tests cannot replace that check. |
 
-Current incident limitations and the exact owner workflow are in [RELIABILITY.md](RELIABILITY.md). Intentional Shed downtime during another task is expected; no camera source or recording changes are part of this work.
+Current incident limitations and the exact owner workflow are in [RELIABILITY.md](RELIABILITY.md). The owner confirmed Shed and Back Door downtime during another task was intentional; no camera source or recording changes are part of this work.
 
 ## Release verification
 

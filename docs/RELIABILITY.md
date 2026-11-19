@@ -12,9 +12,9 @@ It adds no camera start, reconnect loop, third-party monitoring service or publi
 - App/page render errors show Try again, Reload page, Open cameras and Private access setup. A root-layout error has its own fallback. A camera render boundary unmounts only that tile: its existing unregister cleanup stops its peer/tracks and releases its lease; the other tiles remain mounted.
 - Unexpected asynchronous browser errors show a dismissible recovery notice. Reload is always an explicit user action.
 - Unsupported WebRTC is detected before requesting a lease. Available snapshots and navigation remain usable.
-- Missing pages and loading states have useful return paths. JavaScript-disabled browsers receive an explanatory message. The site cannot guarantee a fallback when the origin itself, browser or all JavaScript assets are unavailable; a full offline shell is not included.
+- Missing pages and loading states have useful return paths. JavaScript-disabled browsers receive an explanatory message. After a successful online visit, a supported browser can show a script-free offline recovery page on a later full navigation, with explicit Retry. It caches only three public fallback assets; see [OFFLINE.md](OFFLINE.md) for exact bounds and first-visit/browser limitations.
 
-Camera policies are unchanged: Swann starts once after authentication; Ring live requires fullscreen and explicit Play; hidden/offline/Stop/expired leases require explicit resume. Do not label an intentional camera outage as a fault needing repair. Shed was intentionally taken offline by the owner during this work.
+Camera policies are unchanged: Swann starts once after authentication; Ring live requires fullscreen and explicit Play; hidden/offline/Stop/expired leases require explicit resume. Do not label an intentional camera outage as a fault needing repair. The owner confirmed both Shed and Back Door were intentionally offline for separate testing.
 
 ## Event path and privacy
 
@@ -64,6 +64,6 @@ The importer accepts `website_incident` JSON lines or Vercel records whose `mess
 
 ## Verification and rollout
 
-Run `npm run test:reliability`, `npm run typecheck`, `npm run lint`, `npm run build`, then `npm run test:browser`. Browser tests use local mocked APIs and deliberate failures; they never start real cameras or weaken production CSP/authentication. The old wall UI fixture explicitly supplies absent Windows WebKit capability because it tests a mocked config-failure path. The separate unsupported-browser case proves that a real missing capability allocates no cameras. Neither is proof of physical iPhone live playback.
+Run `npm run check:release`, then `npm run test:browser` for browser behaviour changes. The release command runs TypeScript, lint, the full unit suite and a production build; GitHub and Vercel source builds run it automatically as described in [RELEASE-CHECKS.md](RELEASE-CHECKS.md). Browser tests use local mocked APIs and deliberate failures; they never start real cameras or weaken production CSP/authentication. The old wall UI fixture explicitly supplies absent Windows WebKit capability because it tests a mocked config-failure path. The separate unsupported-browser case proves that a real missing capability allocates no cameras. Neither is proof of physical iPhone live playback.
 
 The companion gateway must provide `/v1/diagnostics` before expecting durable delivery. If website and gateway releases temporarily differ, console fallback and bounded retries continue safely. Deploy/revert only the website and isolated website gateway components; do not restart Frigate, Neolink, the private viewer or recording services for this change. The gateway ledger is separate from accounts/security state and should be retained across code rollback.
