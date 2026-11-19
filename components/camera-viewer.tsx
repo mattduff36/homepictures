@@ -32,7 +32,7 @@ function PlayIcon() {
   </svg>;
 }
 
-function useRecordingStatus(enabled: boolean) {
+function useRecordingStatus(enabled: boolean, showRecordings: boolean) {
   const [states, setStates] = useState<Record<string, RecordingState>>({});
   useEffect(() => {
     if (!enabled) return;
@@ -50,6 +50,11 @@ function useRecordingStatus(enabled: boolean) {
       request = current;
       const started = performance.now();
       try {
+        if (!showRecordings) {
+          // Ring-only and snapshot viewers still count while this page is visible.
+          await viewerApi("session", {}, current.signal);
+          return;
+        }
         const result = await viewerApi("recording", {}, current.signal);
         if (current.signal.aborted) return;
         if (!validRecording(result)) throw new Error("Invalid recording status");
@@ -87,8 +92,8 @@ function useRecordingStatus(enabled: boolean) {
       window.removeEventListener("pagehide", stop);
       window.removeEventListener("pageshow", refresh);
     };
-  }, [enabled]);
-  return enabled ? states : {};
+  }, [enabled, showRecordings]);
+  return enabled && showRecordings ? states : {};
 }
 
 const WALL_ORDER: readonly Wall[] = ["swann", "all", "ring"];
@@ -325,7 +330,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   const [error, setError] = useState("");
   const [errorReference, setErrorReference] = useState("");
   const [group, setGroup] = useState<"all" | "swann" | "ring">("all");
-  const recordingStates = useRecordingStatus(group !== "ring" && !!account?.cameras.some(camera => camera.kind === "swann"));
+  const recordingStates = useRecordingStatus(!!account, group !== "ring" && !!account?.cameras.some(camera => camera.kind === "swann"));
   const menu = useRef<HTMLDialogElement>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [preferences, setPreferences] = useState<VisionPreferences>(DEFAULT_VISION_PREFERENCES);
