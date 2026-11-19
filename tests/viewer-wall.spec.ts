@@ -12,8 +12,19 @@ async function expectRows(page: Page, expected: number[]) {
   })).toEqual(expected);
 }
 
+async function openHome(page: Page) {
+  if (page.context().browser()?.browserType().name() === 'webkit') {
+    // WebKit cannot intercept a 3xx response to strip the HTTP fixture's HTTPS
+    // upgrade. Verify the real redirect, then browser-test its observed target.
+    const entry = await page.request.get('/', {maxRedirects:0});
+    expect(entry.status()).toBe(307);
+    expect(entry.headers().location).toBe('/watch');
+    await page.goto(entry.headers().location);
+  } else await page.goto('/');
+}
+
 test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page }, testInfo) => {
-  // The isolated fixture uses HTTP; production retains its HTTPS upgrade policy.
+  // The isolated HTTP fixture strips the viewer HTTPS upgrade. Production retains its HTTPS policy.
   await page.route('**/watch', async route => {
     const response = await route.fetch();
     const headers = response.headers();
@@ -34,7 +45,7 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
       return route.fulfill({ json: { username:'test', cameras:VIEWER_CAMERAS, expires:Date.now()/1000+3600 } });
     }
     if (action === 'snapshot') return route.fulfill({ status:503, json:{error:'snapshot_unavailable'} });
-    if (action === 'sessions') return route.fulfill({ json: { limit:3, sessions:[
+    if (action === 'sessions') return route.fulfill({ json: { limit:5, sessions:[
       {id:currentId, issuedAt:1800000000, expires:1800604800, current:true},
       ...(!revoked.length ? [{id:otherId, issuedAt:1800000000, expires:1800604800, current:false}] : []),
     ] } });
@@ -42,12 +53,17 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
     if (action === 'config') { configs.push(route.request().postDataJSON()); return route.fulfill({ status:503,json:{error:'test_unavailable'} }); }
     return route.fulfill({ json:{ok:true} });
   });
-  await page.emulateMedia({reducedMotion:'reduce'});
-  await page.goto('/watch');
+  await openHome(page);
+  await expect(page).toHaveURL(/\/watch$/);
+  await expect(page.getByRole('heading',{name:'Home Camera Access'})).toHaveCount(0);
+  await expect(page.locator('.vision-startup')).toHaveCount(0);
+  expect(configs).toHaveLength(0);
+  releaseSession();
   await expect(page.locator('main')).toHaveAttribute('inert','');
   await page.keyboard.press('Tab');
   expect(await page.evaluate(() => document.activeElement?.closest('main') === null)).toBe(true);
-  releaseSession();
+  await expect.poll(()=>configs.length).toBe(5);
+  expect(configs.every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
   await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toHaveCount(0,{timeout:16000});
   await expect(page.locator('main')).not.toHaveAttribute('inert');
   await expect(page.getByRole('button',{name:'Open menu'})).toBeVisible();
@@ -69,7 +85,7 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   expect(grid?.width).toBe(page.viewportSize()?.width);
   expect(grid?.height).toBe(page.viewportSize()?.height);
   for (const player of originalPlayers) expect(await player.evaluate(node=>node.isConnected)).toBe(true);
-  expect(configs).toHaveLength(0);
+  expect(configs).toHaveLength(5);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('all-wall.png'),fullPage:true});
   await page.getByRole('button',{name:'Ring',exact:true}).click();
@@ -79,25 +95,26 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await expect(page.getByRole('button',{name:'Play',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Front ring camera fullscreen'})).toBeVisible();
-  expect(configs).toHaveLength(0);
+  expect(configs).toHaveLength(5);
   await page.getByRole('button',{name:'Play',exact:true}).click();
-  await expect.poll(()=>configs.length).toBe(1);
-  expect(configs[0]).toEqual({camera:'ring-front',mode:'manual'});
+  await expect.poll(()=>configs.length).toBe(6);
+  expect(configs[5]).toEqual({camera:'ring-front',mode:'manual'});
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
-  expect(configs).toHaveLength(1);
+  expect(configs).toHaveLength(6);
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await page.getByRole('button',{name:'Open menu'}).click();
   await expect(page.getByRole('dialog',{name:'Vision menu'})).toBeVisible();
   await page.getByRole('button',{name:'Manage saved sign-ins'}).click();
   const saved = page.getByRole('dialog',{name:'Saved sign-ins',exact:true});
   await expect(saved.getByRole('heading',{name:'This browser'})).toBeVisible();
+  await expect(saved).toContainText('Up to 5 saved sign-ins');
   await expect(saved.getByRole('button',{name:'Sign out this session'})).toHaveCount(1);
   await page.screenshot({path:testInfo.outputPath('saved-sign-ins.png')});
   await saved.getByRole('button',{name:'Sign out this session'}).click();
   await expect(saved.getByRole('heading',{name:'Other saved sign-in'})).toHaveCount(0);
   expect(revoked).toEqual([otherId]);
-  expect(configs).toHaveLength(1);
+  expect(configs).toHaveLength(6);
   await page.keyboard.press('Escape');
   await expect(saved).toHaveCount(0);
   await page.getByRole('button',{name:'Open menu'}).click();
@@ -109,25 +126,27 @@ test('walls, fullscreen and menu keep Ring behind explicit Play', async ({ page 
   await page.getByRole('button',{name:'Swann',exact:true}).click();
   await expect(page.locator('.vision-tile:visible')).toHaveCount(5);
   await page.getByRole('button',{name:'Start wall',exact:true}).filter({visible:true}).click();
-  await expect.poll(()=>configs.length).toBe(6);
-  expect(configs.slice(1).every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
+  await expect.poll(()=>configs.length).toBe(11);
+  expect(configs.slice(6).every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
   await page.getByRole('button',{name:'Open Shed fullscreen',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Shed swann camera fullscreen'})).toBeVisible();
-  expect(configs).toHaveLength(6);
+  expect(configs).toHaveLength(11);
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await page.getByRole('button',{name:'All Cameras',exact:true}).click();
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   await expect(page.locator('.vision-start-floating')).toBeVisible();
-  expect(configs).toHaveLength(6);
+  expect(configs).toHaveLength(11);
   await page.getByRole('button',{name:'Open menu'}).click();
   await page.getByRole('button',{name:'Sign out',exact:true}).click();
   await page.getByLabel('Username',{exact:true}).fill('test');
   await page.getByLabel('Password',{exact:true}).fill('fixture-password');
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
-  await expect(page.locator('.vision-start-floating')).toBeVisible();
+  await expect.poll(()=>configs.length).toBe(16);
+  await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toHaveCount(0,{timeout:16000});
+  await expect(page.locator('.vision-start-floating')).toHaveCount(0);
   await expect(page.locator('dialog[open]')).toHaveCount(0);
-  expect(configs).toHaveLength(6);
+  expect(configs.slice(11).every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
   await page.getByRole('button',{name:'Swann',exact:true}).click();
   await page.setViewportSize({width:844,height:390});
   await expectRows(page, [2,3]);
@@ -142,6 +161,7 @@ test('settings and Featured reuse mounted players, respect preference and never 
   const calls:string[]=[];
   await page.route('**/api/viewer/**',route=>{const action=new URL(route.request().url()).pathname.split('/').pop()!;calls.push(action);return route.fulfill(action==='session'?{json:{username:'test',cameras:VIEWER_CAMERAS,expires:Date.now()/1000+3600}}:action==='snapshot'?{status:503,json:{error:'snapshot_unavailable'}}:{json:{ok:true}});});
   await page.goto('/watch');
+  await expect.poll(()=>calls.filter(action=>action==='config').length).toBe(5);
   await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toHaveCount(0,{timeout:16000});
   const nodes=await page.locator('.vision-tile video').elementHandles();
   await page.getByRole('button',{name:'Open menu'}).click();
@@ -158,14 +178,48 @@ test('settings and Featured reuse mounted players, respect preference and never 
   await page.screenshot({path:testInfo.outputPath('featured-ring.png')});
   await page.getByRole('button',{name:'Open Front fullscreen',exact:true}).click();
   await expect(page.getByRole('button',{name:'Play',exact:true})).toBeVisible();
-  expect(calls.filter(action=>action==='config')).toHaveLength(0);
+  expect(calls.filter(action=>action==='config')).toHaveLength(5);
   await page.getByRole('button',{name:'Close fullscreen'}).click();
   for(const node of nodes) expect(await node.evaluate(item=>item.isConnected)).toBe(true);
   await page.getByRole('button',{name:'Open menu'}).click();
   await page.getByRole('dialog',{name:'Vision menu'}).getByRole('button',{name:'All Cameras',exact:true}).click();
   await expect(page.locator('.vision-grid')).toHaveAttribute('data-layout','featured');
   await page.reload();
+  await expect.poll(()=>calls.filter(action=>action==='config').length).toBe(10);
   await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toHaveCount(0,{timeout:16000});
   await expect(page.locator('.vision-grid')).toHaveAttribute('data-layout','featured');
-  expect(calls.filter(action=>action==='config')).toHaveLength(0);
+  expect(calls.filter(action=>action==='config')).toHaveLength(10);
+});
+
+
+test('signed-out home opens sign-in and launches once after login', async ({page}) => {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.route('**/watch',async route=>{const response=await route.fetch();const headers=response.headers();headers['content-security-policy']=(headers['content-security-policy']||'').replace(/upgrade-insecure-requests;?/g,'');await route.fulfill({response,headers});});
+  let signedIn=false;
+  const configs:Array<{camera:string;mode:string}>=[];
+  await page.route('**/api/viewer/**',async route=>{
+    const action=new URL(route.request().url()).pathname.split('/').pop();
+    if(action==='login'){signedIn=true;return route.fulfill({json:{ok:true}});}
+    if(action==='session')return route.fulfill(signedIn?{json:{username:'test',cameras:VIEWER_CAMERAS,expires:Date.now()/1000+3600}}:{status:401,json:{error:'unauthorized'}});
+    if(action==='config'){configs.push(route.request().postDataJSON());return route.fulfill({status:503,json:{error:'test_unavailable'}});}
+    if(action==='snapshot')return route.fulfill({status:503,json:{error:'snapshot_unavailable'}});
+    return route.fulfill({json:{ok:true}});
+  });
+  await openHome(page);
+  await expect(page).toHaveURL(/\/watch$/);
+  await expect(page.getByRole('heading',{name:'Sign in to Vision'})).toBeVisible();
+  await expect(page.locator('.vision-startup')).toHaveCount(0);
+  expect(configs).toHaveLength(0);
+  await page.getByLabel('Username',{exact:true}).fill('test');
+  await page.getByLabel('Password',{exact:true}).fill('fixture-password');
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  await expect.poll(()=>configs.length).toBe(5);
+  await expect(page.getByRole('status',{name:'Starting MPDEE Vision'})).toHaveCount(0,{timeout:16000});
+  await expect(page.locator('.vision-start-floating')).toHaveCount(0);
+  expect(configs.every(c=>c.mode==='live'&&!c.camera.startsWith('ring-'))).toBe(true);
+  await page.evaluate(()=>{window.dispatchEvent(new Event('offline'));window.dispatchEvent(new Event('online'));});
+  await expect(page.locator('.vision-start-floating')).toBeVisible();
+  await page.getByRole('button',{name:'Open menu'}).click();
+  await page.getByRole('button',{name:'Close menu'}).click();
+  expect(configs).toHaveLength(5);
 });

@@ -9,10 +9,14 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   await connection();
 
+  if (viewerEnabled()) {
+    redirect("/watch");
+  }
+
   const cameraUrl = getCameraUrl();
   if (!cameraUrl) {
     redirect("/setup");
   }
 
-  return <ConnectionGateway cameraUrl={cameraUrl} pilotEnabled={viewerEnabled()} />;
+  return <ConnectionGateway cameraUrl={cameraUrl} />;
 }

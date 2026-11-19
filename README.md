@@ -24,7 +24,8 @@ changes; a repeated Ring thumbnail reuses its existing in-memory still. Layout
 preferences are the only viewer data kept in localStorage. Credentials, account
 data, media, TURN configuration and snapshots are never persisted there.
 
-Browser viewing still requires Start wall for Swann. Ring remains snapshot-only
+Visiting `/` opens `/watch` directly. After a new or restored sign-in, the
+startup animation plays and the Swann wall starts once, muted. Ring remains snapshot-only
 until fullscreen plus explicit Play, for at most five minutes. Opening Ring
 fullscreen stops the Swann wall; close it and press Start wall to resume. Settings
 contain only browser-supported controls; private appliance operations stay on the
@@ -66,9 +67,10 @@ alone without checking the app's WebRTC/media requirements.
 
 ## User flow
 
-1. By default `https://cctv.mpdee.uk/` tests the Dell origin's `/healthz`.
-   When website viewing is explicitly enabled, root primarily offers Watch cameras,
-   Open existing private cameras (the same health/countdown flow), and setup.
+1. With website viewing enabled, `https://cctv.mpdee.uk/` redirects directly to
+   `/watch`. A saved sign-in launches Vision automatically; otherwise the sign-in
+   form opens, and successful login launches it. Private setup stays at `/setup`.
+   When website viewing is disabled, root retains the private Dell health check.
 2. Only HTTP `204 No Content` counts as successful reachability. Success opens the
    Dell app after the existing short countdown; failure or Cancel opens `/setup`.
 3. `/setup` retains the setup password gate and existing one-step-at-a-time design:
@@ -238,7 +240,8 @@ candidate**, not page load or signalling success. Diagnostic summaries expose
 only relay confirmation and decoded-frame/audio packet/byte counters, no IP/SDP.
 Audio counters alone do not prove audible sound.
 
-Nothing plays before an explicit Watch/wall action. Group navigation and single
+Swann starts once after authentication. Stops, network changes, hidden-page
+returns and expired playback leases require an explicit resume. Group navigation and single
 camera selection preserve one peer/camera; Swann wall uses up to five existing
 SD+audio streams with one sound source. Video starts muted/playsInline; Sound on
 is explicit. Fullscreen uses the full browser viewport with a close control and keyboard
@@ -277,7 +280,7 @@ preserves sessions/security limits but clears unowned leases; never delete state
 Systemd LoadCredential account edits require restarting only the gateway.
 Portal and gateway are a coordinated protocol upgrade.
 
-**Important limits:** login5/source,8/user,30global per15min;3 remembered7day
+**Important limits:** login5/source,8/user,30global per15min;5 remembered7day
 sessions/user; config120/user/hour (Ring additionally30). Swann5/user/session,
 10global; Ring1/user,2global. Offers single-use within60s; unoffered leases
 expire after60s, offered heartbeats after45s; all signed requests1800/minute.

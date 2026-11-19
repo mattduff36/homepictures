@@ -240,7 +240,8 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
   const [layoutOverride, setLayoutOverride] = useState<"featured" | "grid" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [startup, setStartup] = useState(true);
+  const [startup, setStartup] = useState(false);
+  const [launchPending, setLaunchPending] = useState(false);
   const [featuredId, setFeaturedId] = useState("");
   const [paused, setPaused] = useState(false);
   const [soloId, setSoloId] = useState<string | null>(null);
@@ -266,6 +267,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     setMenuOpen(false); setSettingsOpen(false); setSessionsOpen(false);
     setWallStarted(false); setSoloId(null); setSnapshots({});
     setFeaturedId(""); setPaused(false); setGroup("all");
+    setStartup(false); setLaunchPending(false);
   }, []);
   useEffect(() => {
     const media = matchMedia("(min-width: 1100px) and (hover: hover) and (pointer: fine)");
@@ -291,7 +293,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     return () => clearInterval(timer);
   }, [featured, paused, pageVisible, soloId, menuOpen, settingsOpen, sessionsOpen, startup, account, preferences.seconds]);
   const [epoch, setEpoch] = useState(0);
-  const [notice, setNotice] = useState("Press Start wall to watch Swann. Ring stays on snapshots.");
+  const [notice, setNotice] = useState("Vision starts after sign-in. Ring stays on snapshots.");
   const invalidateAuth = useCallback(() => { ++authGeneration.current; }, []);
   const [expired] = useState(() => () => {
     fleet.stop();
@@ -314,6 +316,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
       setEpoch((value) => value + 1);
       setNotice(message);
       setWallStarted(false);
+      setLaunchPending(false);
     };
     const visibility = () => { setPageVisible(!document.hidden); if (document.hidden) stop(); };
     document.addEventListener("visibilitychange", visibility);
@@ -325,7 +328,9 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     if (enabled) {
       void viewerApi("session", {}, abort.signal).then((value) => {
         if (!validSession(value)) throw new Error("Invalid session");
-        if (mounted.current && authGeneration.current === generation) setAccount(value);
+        if (mounted.current && authGeneration.current === generation) {
+          setAccount(value); setStartup(true); setLaunchPending(true);
+        }
       }).catch((failure: unknown) => {
         if (mounted.current && authGeneration.current === generation &&
             !(failure instanceof ViewerApiError && failure.status === 401)) {
@@ -362,6 +367,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
       if (mounted.current && generation === authGeneration.current) {
         form.reset();
         setAccount(session);
+        setStartup(true); setLaunchPending(true);
       }
     } catch (failure) {
       if (mounted.current && generation === authGeneration.current) {
@@ -376,6 +382,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     const generation = ++authGeneration.current;
     fleet.stop();
     setWallStarted(false);
+    setLaunchPending(false);
     setEpoch((value) => value + 1);
     setBusy(true);
     setError("");
@@ -392,7 +399,7 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     }
   }
 
-  function closeMenu() { menu.current?.close(); setMenuOpen(false); }
+  const closeMenu = useCallback(() => { menu.current?.close(); setMenuOpen(false); }, []);
   function updatePreferences(next: VisionPreferences) {
     const clean = normalizePreferences(next);
     if (clean.layout !== preferences.layout) setLayoutOverride(null);
@@ -410,13 +417,22 @@ export function CameraViewer({ enabled }: { enabled: boolean }) {
     }
     closeMenu();
   }
-  function startWall() {
+  const startWall = useCallback(() => {
     if (!account || document.hidden || navigator.onLine === false) return;
+    const cameras = account.cameras.filter(camera => camera.kind === "swann");
+    if (!cameras.length) return;
     setWallStarted(true); setNotice("Starting Swann cameras…"); closeMenu();
-    void fleet.watch(account.cameras.filter(camera => camera.kind === "swann"))
+    void fleet.watch(cameras)
       .then(failed => setNotice(failed?.length ? `${failed.join(", ")} could not start. Use each camera's Retry button.` : "LIVE appears when moving video is confirmed."))
       .catch(() => { setError("Could not start the wall. Please try again."); setWallStarted(false); });
-  }
+  }, [account, fleet, closeMenu]);
+  useEffect(() => {
+    if (!launchPending || !account || checking || !preferencesReady) return;
+    // Launch once after authentication, after the tiles have registered players.
+    // Stopping, hiding the page or reaching a lease limit never renews this launch.
+    const launch = setTimeout(() => { setLaunchPending(false); startWall(); }, 0);
+    return () => clearTimeout(launch);
+  }, [launchPending, account, checking, preferencesReady, startWall]);
   function swipeStart(event: PointerEvent<HTMLDivElement>) {
     if (event.pointerType === "mouse" || soloId || (event.target as HTMLElement).closest(".vision-tile-controls,.vision-expand")) return;
     pointerStart.current = {x:event.clientX, y:event.clientY};

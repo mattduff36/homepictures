@@ -100,10 +100,19 @@ test("saved sign-ins require authentication and validate the scoped session list
   const saved = { id: "a".repeat(64), issuedAt: 100, expires: 604900, current: true };
   const result = await handleViewerRequest(request(), "sessions", async (_url, init) => {
     assert.deepEqual(JSON.parse(String(init?.body)), { session });
-    return response({ sessions: [saved], limit: 3 });
+    return response({ sessions: [saved], limit: 5 });
   });
   assert.equal(result.status, 200);
-  assert.deepEqual(await result.json(), { sessions: [saved], limit: 3 });
+  assert.deepEqual(await result.json(), { sessions: [saved], limit: 5 });
+  const five = Array.from({ length: 5 }, (_, index) => ({ ...saved,
+    id: String(index).repeat(64), current: index === 0 }));
+  const full = await handleViewerRequest(request(), "sessions", async () => response({ sessions: five, limit: 5 }));
+  assert.equal(full.status, 200);
+  assert.deepEqual(await full.json(), { sessions: five, limit: 5 });
+  const legacy = await handleViewerRequest(request(), "sessions", async () => response({ sessions: [saved], limit: 3 }));
+  assert.equal(legacy.status, 200);
+  const rollback = await handleViewerRequest(request(), "sessions", async () => response({ sessions: five, limit: 3 }));
+  assert.equal(rollback.status, 200);
   assert.equal((await handleViewerRequest(request({}, {}, false), "sessions", noFetch)).status, 401);
   assert.equal((await handleViewerRequest(request({ id: session }), "revoke-session", noFetch)).status, 400);
   const revoked = await handleViewerRequest(request({ id: saved.id }), "revoke-session", async (_url, init) => {
@@ -111,8 +120,10 @@ test("saved sign-ins require authentication and validate the scoped session list
     return response({ ok: true });
   });
   assert.equal(revoked.status, 200);
-  for (const invalid of [{ sessions: [saved, saved], limit: 3 },
-    { sessions: [{ ...saved, current: false }], limit: 3 }, { sessions: [saved], limit: 4 }]) {
+  for (const invalid of [{ sessions: [saved, saved], limit: 5 },
+    { sessions: [{ ...saved, current: false }], limit: 5 }, { sessions: [saved], limit: 4 },
+    { sessions: [...five, { ...saved, id: "f".repeat(64), current: false }], limit: 5 },
+    { sessions: five, limit: 10 }]) {
     assert.equal((await handleViewerRequest(request(), "sessions", async () => response(invalid))).status, 502);
   }
 });

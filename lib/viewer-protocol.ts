@@ -16,13 +16,14 @@ export type CameraId = ViewerCamera["id"];
 export type LiveMode = "live" | "manual";
 export const VIEWER_COOKIE = "__Host-mpdee-viewer";
 export const VIEWER_SESSION_SECONDS = 7 * 24 * 60 * 60;
+export const VIEWER_SAVED_SESSION_LIMIT = 5;
 export const VIEWER_PLAYBACK_MS = 15 * 60 * 1000;
 export const VIEWER_MAX_JSON = 65536;
 export const VIEWER_MAX_SDP = 48000;
 export const VIEWER_GATEWAY_ORIGIN = "https://mpdee-vision.tail03543e.ts.net:10000";
 export const VIEWER_MAX_SNAPSHOT_JSON = 1004096;
 export const VIEWER_FAILURE_MESSAGES = {
-  session_limit: "This account has reached its three saved sign-ins. Sign out an old session from another signed-in device, then try again.",
+  session_limit: "This account has reached its saved sign-in limit. Sign out an old session from another signed-in device, then try again.",
   login_rate_limit: "Too many sign-in attempts. Please wait up to 15 minutes before trying again.",
   stream_capacity: "The camera viewing capacity is in use. Stop another viewing session, then retry.",
   start_rate_limit: "The hourly camera-start allowance has been reached. Please try again later.",
@@ -40,8 +41,9 @@ export type ViewerAction = (typeof VIEWER_ACTIONS)[number];
 export type SavedSession = { id: string; issuedAt: number; expires: number; current: boolean };
 
 export function validSavedSessions(value: unknown): value is { sessions: SavedSession[]; limit: number } {
-  if (!exactFields(value, ["sessions", "limit"]) || value.limit !== 3 || !Array.isArray(value.sessions) ||
-      value.sessions.length > 3) return false;
+  // Accept the previous gateway response during a coordinated rollout/rollback.
+  if (!exactFields(value, ["sessions", "limit"]) || (value.limit !== 3 && value.limit !== VIEWER_SAVED_SESSION_LIMIT) || !Array.isArray(value.sessions) ||
+      value.sessions.length > VIEWER_SAVED_SESSION_LIMIT) return false;
   return value.sessions.every((entry) => exactFields(entry, ["id", "issuedAt", "expires", "current"]) &&
     typeof entry.id === "string" && /^[0-9a-f]{64}$/.test(entry.id) &&
     Number.isSafeInteger(entry.issuedAt) && Number.isSafeInteger(entry.expires) &&
