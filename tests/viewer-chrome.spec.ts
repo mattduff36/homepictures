@@ -91,11 +91,34 @@ test('idle touch wakes controls without opening or playing a camera, and the nex
   expect(configs[0]).toEqual({camera:ring.id,mode:'manual'});
 });
 
-test('badge backgrounds disappear after ten seconds while white camera text stays visible', async ({page}) => {
+test('badge backgrounds start fading after eight seconds and fade for four seconds while text stays white', async ({page}) => {
   await viewer(page);
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  // Start a fresh idle window after the startup effects have settled.
+  await page.mouse.move(2,2);
+  const screen = page.getByRole('main',{name:'MPDEE Vision'});
   const name = page.locator('.vision-name');
   await expect(name).toHaveCSS('background-color','rgba(8, 8, 8, 0.78)');
-  await page.clock.fastForward(10100);
+  await page.clock.fastForward(7500);
+  await expect(screen).toHaveAttribute('data-badges','shown');
+  await expect(name).toHaveCSS('background-color','rgba(8, 8, 8, 0.78)');
+  await page.clock.fastForward(600);
+  await expect(screen).toHaveAttribute('data-badges','quiet');
+  // Inspect and sample the actual CSS transitions without waiting four real seconds.
+  const durations = await name.evaluate(element => element.getAnimations().map(animation => {
+    const duration = animation.effect!.getTiming().duration;
+    animation.pause();
+    animation.currentTime = 2000;
+    return duration;
+  }));
+  expect(durations.length).toBeGreaterThan(0);
+  expect(durations.every(duration=>duration === 4000)).toBe(true);
+  const alpha = await name.evaluate(element => Number(getComputedStyle(element).backgroundColor.match(/,\s*([\d.]+)\)$/)?.[1]));
+  expect(alpha).toBeGreaterThan(0);
+  expect(alpha).toBeLessThan(.78);
+  await expect(name).toHaveCSS('color','rgb(255, 255, 255)');
+  await name.evaluate(element => element.getAnimations().forEach(animation => animation.finish()));
   await expect(name).toBeVisible();
   await expect(name).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
   await expect(name).toHaveCSS('border-top-color','rgba(0, 0, 0, 0)');
@@ -103,6 +126,12 @@ test('badge backgrounds disappear after ten seconds while white camera text stay
   await tap(page,page.getByRole('region',{name:'Front ring camera',exact:true}));
   await expect(name).toHaveCSS('background-color','rgba(8, 8, 8, 0.78)');
   await expect(page.getByRole('dialog',{name:'Front ring camera fullscreen'})).toHaveCount(0);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.clock.fastForward(8100);
+  await expect(screen).toHaveAttribute('data-badges','quiet');
+  // The shared reduced-motion rule uses an effectively instant 0.01ms transition.
+  expect(await name.evaluate(element => Number.parseFloat(getComputedStyle(element).transitionDuration))).toBeLessThanOrEqual(.001);
+  await expect(name).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
 });
 
 test('keyboard focus and open menus stay usable while idle', async ({page}) => {

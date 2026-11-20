@@ -37,7 +37,7 @@ html:has(.vision-app),body:has(.vision-app) {
 .vision-icon svg,.vision-menu-action svg { width:19px; height:19px; }
 .vision-app :is(.vision-badge,.vision-chrome,.vision-burger) { background:var(--vision-chrome-background); border-color:var(--vision-chrome-border); }
 .vision-tile-play { display:grid; place-items:center; cursor:pointer; }
-.vision-badge { color:#fff; border:1px solid; font:600 10px/1 system-ui,sans-serif; transition:background-color .6s,border-color .6s; }
+.vision-badge { color:#fff; border:1px solid; font:600 10px/1 system-ui,sans-serif; transition:background-color var(--vision-badge-fade-duration,.6s),border-color var(--vision-badge-fade-duration,.6s); }
 .vision-name { position:absolute; bottom:var(--vision-tile-bottom); right:var(--vision-tile-right); z-index:3; display:flex; align-items:center; height:20px; gap:4px; max-width:calc(100% - 65px); padding:0 5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
 .vision-recording { position:absolute; top:calc(var(--vision-tile-top) + 7px); right:calc(var(--vision-tile-right) + 7px); z-index:3; width:8px; height:8px; border-radius:50%; background:rgb(255 255 255 / .22); pointer-events:none; }
 .vision-recording[data-recording-state="recording"],.vision-ring-live::before { background:rgb(225 29 46 / .6); }
@@ -212,6 +212,7 @@ html:has(.vision-app),body:has(.vision-app) {
   transition:opacity .22s,visibility 0s linear .22s;
 }
 .vision-app[data-badges="quiet"] .vision-badge {
+  --vision-badge-fade-duration:4s;
   background-color:transparent; border-color:transparent; box-shadow:none;
   text-shadow:0 1px 3px #000,0 0 2px #000;
 }

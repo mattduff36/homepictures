@@ -21,7 +21,7 @@ export function useViewerChrome(root: RefObject<HTMLElement | null>, enabled: bo
         // A keyboard user must not lose the control they are operating.
         if (!element.querySelector(":focus-visible")) element.setAttribute("data-controls", "hidden");
       }, 3000);
-      badges = setTimeout(() => { element.setAttribute("data-badges", "quiet"); }, 10000);
+      badges = setTimeout(() => { element.setAttribute("data-badges", "quiet"); }, 8000);
     };
     const reveal = () => {
       element.setAttribute("data-controls", "shown");
