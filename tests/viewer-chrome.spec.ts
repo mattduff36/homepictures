@@ -123,6 +123,8 @@ test('badge backgrounds start fading after eight seconds and fade for four secon
   await expect(name).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
   await expect(name).toHaveCSS('border-top-color','rgba(0, 0, 0, 0)');
   await expect(name).toHaveCSS('color','rgb(255, 255, 255)');
+  // WebKit needs its normal frame clock for the real tap-to-restore transition.
+  await page.clock.resume();
   await tap(page,page.getByRole('region',{name:'Front ring camera',exact:true}));
   await expect(name).toHaveCSS('background-color','rgba(8, 8, 8, 0.78)');
   await expect(page.getByRole('dialog',{name:'Front ring camera fullscreen'})).toHaveCount(0);
